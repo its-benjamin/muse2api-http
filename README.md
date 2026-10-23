@@ -13,7 +13,7 @@ a captured HAR and the public Next.js bundle. `rea/` is a local working copy
 
 | Surface | Behaviour |
 |---|---|
-| `POST /v1/chat/completions` | Streaming and non-streaming text chat, multi-turn per API session (`x-muse-session` isolates callers) |
+| `POST /v1/chat/completions` | Streaming/non-streaming chat with native image attachments, OpenAI `tools` bridging (auto / required / forced), and multi-turn isolation via `x-muse-session` |
 | `POST /v1/responses` | Codex-style Responses API adapter over the same chat backend |
 | `POST /v1/images/generations` | Text-to-image; returns a hosted media URL (and `b64_json` when requested) |
 | `POST /v1/images/edits` | Image edit / image-to-image with reference images |
@@ -190,9 +190,13 @@ random headers:
 
 ## Known limits
 
-- **No native function calling.** The upstream protocol exposes agent tools but
-  not an OpenAI `tools` schema. `tools`/`tool_choice` are ignored; Responses
-  output contains text only (no `function_call` items).
+- **Function calling is bridged.** Muse exposes few client tools on the wire,
+  so `muse2api/tool_bridge.py` renders the client catalog into the prompt,
+  treats the model's own `<<TOOL_CALL>> ... <<TOOL_CALL>>` or `\u0060\u0060\u0060json
+  {"name": ...} \u0060\u0060\u0060` blocks as tool requests, and filters invented
+  arguments to the declared schema. Auto / required / forced tool_choice are
+  honoured for both `/v1/chat/completions` and `/v1/responses`, including
+  `function_call` output items and function_call_arguments streaming.
 - **Video is account/region gated.** When muse refuses ("not available for your
   account in your country or region"), the task fails with
   `code: "video_unavailable_region"`, a stable `error`, and the model's prose
