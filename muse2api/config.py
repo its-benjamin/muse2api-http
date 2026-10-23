@@ -32,6 +32,11 @@ class Settings:
     # Optional confidential-VM credentials. Standard VMs ignore both.
     cvm_rv_key: str | None = None
     attestation_cmd: str | None = None
+    # Browser fingerprint. Keep the cookie's browser family to avoid a
+    # UA/TLS mismatch. "auto" lets the impersonation profile pick HTTP/2.
+    impersonate: str = "firefox147"
+    http_version: str = "auto"
+    user_agent: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -52,6 +57,9 @@ class Settings:
             log_level=os.environ.get("MUSE_LOG_LEVEL", os.environ.get("LOG_LEVEL", "info")),
             cvm_rv_key=os.environ.get("MUSE_CVM_RV_KEY") or None,
             attestation_cmd=os.environ.get("MUSE_ATTESTATION_CMD") or None,
+            impersonate=os.environ.get("MUSE_IMPERSONATE", "firefox147"),
+            http_version=os.environ.get("MUSE_HTTP_VERSION", "auto").strip().lower(),
+            user_agent=os.environ.get("MUSE_USER_AGENT") or None,
         )
 
     def ensure_state_dir(self) -> Path:

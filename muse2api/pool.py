@@ -105,6 +105,8 @@ class AccountPool:
                     ws_path=self.protocol.ws_path,
                     cvm_rv_key=self.settings.cvm_rv_key,
                     attestation_cmd=self.settings.attestation_cmd,
+                    ws_client=account.http.client,
+                    impersonate=self.settings.impersonate,
                 )
                 account.mark_good()
                 return account, session, conn

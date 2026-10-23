@@ -37,10 +37,18 @@ BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) "
     "Gecko/20100101 Firefox/158.0"
 )
+# Exact header set Firefox uses for the gateway upgrade (captured HAR).
 WS_HEADERS = {
     "Origin": "https://muse.ai",
     "User-Agent": BROWSER_UA,
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "websocket",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-Fetch-Storage-Access": "none",
+    "Pragma": "no-cache",
+    "Cache-Control": "no-cache",
 }
 
 
@@ -204,25 +212,57 @@ class HatchConnection:
         timeout: float = 20.0,
         cvm_rv_key: str | None = None,
         attestation_cmd: str | None = None,
+        ws_client=None,
+        impersonate: str = "firefox147",
     ) -> "HatchConnection":
         url = session.websocket_url(lb_host=lb_host, path=ws_path)
         log.debug("connecting %s", url.split("?")[0])
-        ws = await ws_connect(
-            url,
-            origin=WS_HEADERS["Origin"],
-            user_agent_header=WS_HEADERS["User-Agent"],
-            additional_headers={"Accept-Language": WS_HEADERS["Accept-Language"]},
-            max_size=None,
-            open_timeout=timeout,
-            ping_interval=20,
-            ping_timeout=20,
-        )
+        ws = None
+        own_client = None
+        if ws_client is None:
+            from curl_cffi import AsyncSession
+
+            own_client = AsyncSession(impersonate=impersonate, max_clients=2)
+            ws_client = own_client
+        try:
+            from curl_cffi import WebSocketRetryStrategy
+
+            ws = await ws_client.ws_connect(
+                url,
+                headers=WS_HEADERS,
+                timeout=timeout,
+                impersonate=impersonate,
+                max_message_size=16 * 1024 * 1024,
+                ws_retry=WebSocketRetryStrategy(retry=True, count=3),
+            )
+            log.debug("websocket via curl_cffi (%s fingerprint)", impersonate)
+        except Exception as exc:  # noqa: BLE001 - keep a stdlib TLS fallback
+            log.warning("curl_cffi websocket failed (%s); using websockets", exc)
+            ws = await ws_connect(
+                url,
+                origin=WS_HEADERS["Origin"],
+                user_agent_header=WS_HEADERS["User-Agent"],
+                additional_headers={
+                    key: value for key, value in WS_HEADERS.items()
+                    if key not in ("Origin", "User-Agent")
+                },
+                max_size=None,
+                open_timeout=timeout,
+                ping_interval=20,
+                ping_timeout=20,
+            )
+        if own_client is not None:
+            # The connection owns the dedicated session only when the caller
+            # did not supply a shared one; keep a reference for cleanup.
+            log.debug("websocket uses a dedicated curl_cffi session")
         noise = NoiseXXInitiator()
         await noise.initialize()
         client_nonce, payload1 = make_message1_payload()
         await ws.send(noise.write_message1(payload1))
         message1_hash = noise.handshake_hash
         message2 = await asyncio.wait_for(ws.recv(), timeout)
+        if isinstance(message2, tuple):  # curl_cffi returns (payload, flags)
+            message2 = message2[0]
         if not isinstance(message2, (bytes, bytearray)):
             await ws.close()
             raise GatewayError("expected binary Noise handshake message 2")
@@ -260,7 +300,9 @@ class HatchConnection:
         await ws.send(noise.write_message3(message3_payload))
         tx, rx = noise.split()
         log.debug("noise handshake complete")
-        return cls(ws, tx, rx, locale=locale)
+        conn = cls(ws, tx, rx, locale=locale)
+        conn._ws_client = own_client
+        return conn
 
     # -- receive -----------------------------------------------------------
 
@@ -463,6 +505,12 @@ class HatchConnection:
             except Exception:  # pragma: no cover
                 pass
             self._closed.set()
+        own_client = getattr(self, "_ws_client", None)
+        if own_client is not None:
+            try:
+                await own_client.close()
+            except Exception:  # pragma: no cover
+                pass
         if not self._receiver.done():
             self._receiver.cancel()
             try:

@@ -102,6 +102,28 @@ The RV proof/HMAC path is implemented and unit-tested; attestation acceptance is
 intentionally delegated because it needs AMD certificate chains and the site's
 verifier trust anchors. Standard-VM accounts never enter this path.
 
+## Request fingerprint
+
+Stealth here means looking like the browser that owns the cookies, not adding
+random headers:
+
+- `curl_cffi` with `impersonate="firefox147"` reproduces Firefox's TLS, HTTP/2
+  and HTTP/3 fingerprints. `MUSE_HTTP_VERSION=auto` negotiates HTTP/3 when the
+  edge advertises it; `2` or `3` pins it.
+- Requests carry the captured Firefox XHR headers (`Accept: */*`,
+  `Accept-Language`, `Origin`, `Referer`, `Sec-Fetch-*`, `Priority`,
+  `Pragma`/`Cache-Control`, `TE: trailers`). Host, `Connection` and
+  `Accept-Encoding` are left to the fingerprint profile.
+- Cookies live in the curl session jar, not in a hand-built `Cookie` header, so
+  rotated `Set-Cookie` values are kept automatically.
+- The WebSocket upgrade goes through the same `curl_cffi` session, so the
+  handshake carries the Firefox TLS/HTTP fingerprint and the exact captured
+  header set (`Sec-Fetch-Mode: websocket`, `Sec-Fetch-Site: cross-site`,
+  `Pragma`/`Cache-Control`). If that path ever fails, it falls back to the
+  stdlib `websockets` client instead of dropping the request.
+- `MUSE_USER_AGENT` is optional. Set it only when the exported cookies belong
+  to an older browser; otherwise keep the UA consistent with the profile.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -118,6 +140,9 @@ verifier trust anchors. Standard-VM accounts never enter this path.
 | `MUSE_LB_HOST` / `MUSE_WS_PATH` / `MUSE_APP_ID` | discovered | Gateway overrides |
 | `MUSE_CVM_RV_KEY` | unset | CVM recovery key |
 | `MUSE_ATTESTATION_CMD` | unset | External attestation verifier |
+| `MUSE_IMPERSONATE` | `firefox147` | curl_cffi fingerprint profile |
+| `MUSE_HTTP_VERSION` | `auto` | `auto`, `1.1`, `2`, `3` |
+| `MUSE_USER_AGENT` | profile | Optional UA override |
 
 ## Tests
 

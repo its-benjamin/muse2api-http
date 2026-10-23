@@ -25,16 +25,33 @@ BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) "
     "Gecko/20100101 Firefox/158.0"
 )
+# Copied from the captured Firefox XHRs. curl_cffi owns TLS/HTTP2,
+# Accept-Encoding, Host and Connection; these are the application headers the
+# web client actually sends.
 BASE_HEADERS = {
-    "User-Agent": BROWSER_UA,
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
     "Origin": BASE,
     "Referer": BASE + "/",
     "Sec-Fetch-Site": "same-origin",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Dest": "empty",
+    "Priority": "u=4",
+    "Pragma": "no-cache",
+    "Cache-Control": "no-cache",
+    "TE": "trailers",
 }
+
+
+def _parse_http_version(value: str):
+    from curl_cffi.const import CurlHttpVersion
+
+    return {
+        "1.1": CurlHttpVersion.V1_1,
+        "2": CurlHttpVersion.V2_0,
+        "3": CurlHttpVersion.V3,
+        "auto": None,
+    }.get(value, None)
 
 
 class MuseAuthError(RuntimeError):
@@ -54,12 +71,21 @@ class MuseHTTP:
             raise CookieError(
                 "missing hatch_sess cookie; export fresh cookies from a logged-in muse.ai tab"
             )
+        self._http_version = _parse_http_version(settings.http_version)
         self._client = AsyncSession(
-            impersonate="chrome",
+            impersonate=settings.impersonate,
             timeout=settings.request_timeout,
+            http_version=self._http_version,
+            max_clients=50,
+            retry=2,
+            cookies=self.jar.copy(),
         )
         self._cached_session: GatewaySession | None = None
         self._cached_at = 0.0
+
+    @property
+    def client(self) -> AsyncSession:
+        return self._client
 
     async def close(self) -> None:
         await self._client.close()
@@ -85,7 +111,8 @@ class MuseHTTP:
         require_ok: bool = True,
     ) -> dict:
         headers = dict(BASE_HEADERS)
-        headers["Cookie"] = self.jar.header()
+        if self.settings.user_agent:
+            headers["User-Agent"] = self.settings.user_agent
         if json_body is not None:
             headers["Content-Type"] = "application/json"
         try:
@@ -261,9 +288,11 @@ class MuseHTTP:
 
         session = await self.bootstrap()
         try:
-            conn = await HatchConnection.connect(session)
+            conn = await HatchConnection.connect(
+                session, ws_client=self._client, impersonate=self.settings.impersonate)
         except Exception:
             # Tokens are short-lived; force one re-bootstrap before surfacing.
             session = await self.bootstrap(force=True)
-            conn = await HatchConnection.connect(session)
+            conn = await HatchConnection.connect(
+                session, ws_client=self._client, impersonate=self.settings.impersonate)
         return session, conn
