@@ -107,7 +107,7 @@ verifier trust anchors. Standard-VM accounts never enter this path.
 Stealth here means looking like the browser that owns the cookies, not adding
 random headers:
 
-- `curl_cffi` with `impersonate="firefox147"` reproduces Firefox's TLS, HTTP/2
+- `curl_cffi` with `impersonate="firefox"` (the latest bundled Firefox profile) reproduces Firefox's TLS, HTTP/2
   and HTTP/3 fingerprints. `MUSE_HTTP_VERSION=auto` negotiates HTTP/3 when the
   edge advertises it; `2` or `3` pins it.
 - Requests carry the captured Firefox XHR headers (`Accept: */*`,
@@ -122,9 +122,10 @@ random headers:
   `Pragma`/`Cache-Control`). If that path ever fails, it falls back to the
   stdlib `websockets` client instead of dropping the request.
 - One UA is used for HTTP, the WebSocket upgrade and the cookie jar
-  (`MUSE_USER_AGENT` overrides it). The TLS profile is pinned to the closest
-  available Firefox build (`firefox147`); the UA may be a newer patch version,
-  which is exactly what a browser update looks like.
+  (`MUSE_USER_AGENT` overrides it). The profile follows curl_cffi's latest
+  bundled Firefox (`firefox` alias); pin `MUSE_IMPERSONATE` if a specific build
+  is required. The UA may be a newer patch version, which is exactly what a
+  browser update looks like.
 
 ## Configuration
 
@@ -142,7 +143,7 @@ random headers:
 | `MUSE_LB_HOST` / `MUSE_WS_PATH` / `MUSE_APP_ID` | discovered | Gateway overrides |
 | `MUSE_CVM_RV_KEY` | unset | CVM recovery key |
 | `MUSE_ATTESTATION_CMD` | unset | External attestation verifier |
-| `MUSE_IMPERSONATE` | `firefox147` | curl_cffi fingerprint profile |
+| `MUSE_IMPERSONATE` | `firefox` | curl_cffi profile alias; pin e.g. `firefox147` if needed |
 | `MUSE_HTTP_VERSION` | `auto` | `auto`, `1.1`, `2`, `3` |
 | `MUSE_USER_AGENT` | profile | Optional UA override |
 

@@ -213,7 +213,7 @@ class HatchConnection:
         cvm_rv_key: str | None = None,
         attestation_cmd: str | None = None,
         ws_client=None,
-        impersonate: str = "firefox147",
+        impersonate: str = "firefox",
     ) -> "HatchConnection":
         url = session.websocket_url(lb_host=lb_host, path=ws_path)
         log.debug("connecting %s", url.split("?")[0])
