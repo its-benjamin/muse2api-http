@@ -111,8 +111,10 @@ class MuseHTTP:
         require_ok: bool = True,
     ) -> dict:
         headers = dict(BASE_HEADERS)
-        if self.settings.user_agent:
-            headers["User-Agent"] = self.settings.user_agent
+        # Keep one UA across HTTP, WebSocket and the exported cookie jar. The
+        # TLS profile is the closest Firefox build available; the UA may be a
+        # newer patch version, which browsers do produce after updates.
+        headers["User-Agent"] = self.settings.user_agent or BROWSER_UA
         if json_body is not None:
             headers["Content-Type"] = "application/json"
         try:

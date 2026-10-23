@@ -121,8 +121,10 @@ random headers:
   header set (`Sec-Fetch-Mode: websocket`, `Sec-Fetch-Site: cross-site`,
   `Pragma`/`Cache-Control`). If that path ever fails, it falls back to the
   stdlib `websockets` client instead of dropping the request.
-- `MUSE_USER_AGENT` is optional. Set it only when the exported cookies belong
-  to an older browser; otherwise keep the UA consistent with the profile.
+- One UA is used for HTTP, the WebSocket upgrade and the cookie jar
+  (`MUSE_USER_AGENT` overrides it). The TLS profile is pinned to the closest
+  available Firefox build (`firefox147`); the UA may be a newer patch version,
+  which is exactly what a browser update looks like.
 
 ## Configuration
 
