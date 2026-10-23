@@ -9,6 +9,15 @@ Reverse engineering was done with [REA](https://github.com/morluto/rea) against
 a captured HAR and the public Next.js bundle. `rea/` is a local working copy
 (git-ignored); the extracted web sources live in `capture/` (also ignored).
 
+## Hermes Agent integration
+
+`plugins/model-providers/muse2api-http/` is a drop-in
+[Model Provider Plugin](https://hermes-agent.nousresearch.com/docs/developer-guide/model-provider-plugin):
+copy it to `$HERMES_HOME/plugins/model-providers/muse2api-http/`, point it at
+`http://127.0.0.1:8130/v1`, and Hermes lists `muse-spark` (plus the alias models)
+right from `/v1/models`; image generation rides the OpenAI-compatible
+`/v1/images/generations` surface.
+
 ## What works
 
 | Surface | Behaviour |
