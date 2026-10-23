@@ -14,7 +14,7 @@ a captured HAR and the public Next.js bundle. `rea/` is a local working copy
 | Surface | Behaviour |
 |---|---|
 | `POST /v1/chat/completions` | Streaming/non-streaming chat with native image attachments, OpenAI `tools` bridging (auto / required / forced), and multi-turn isolation via `x-muse-session` |
-| `POST /v1/responses` | Codex-style Responses API adapter over the same chat backend |
+| `POST /v1/responses` | Codex-style Responses API adapter; `function_call` output items and `function_call_arguments` streaming when tools are used |
 | `POST /v1/images/generations` | Text-to-image; returns a hosted media URL (and `b64_json` when requested) |
 | `POST /v1/images/edits` | Image edit / image-to-image with reference images |
 | `POST /v1/videos` | Text-to-video and first-frame image-to-video (`reference_image`, `image_url` or `image` as URL/data-URI/base64), async task id |
