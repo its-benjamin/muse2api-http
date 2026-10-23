@@ -441,17 +441,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def _keepalive(app: FastAPI) -> None:
         last_refresh = time.time()
+        last_cookie_renew = time.time()
         while True:
             await asyncio.sleep(60)
-            idle_threshold = settings.idle_sleep_seconds
             now = time.time()
+
+            # Always renew cookies via lightweight GET /api/session every 6 hours, even during idle sleep
+            if now - last_cookie_renew >= 6 * 3600:
+                last_cookie_renew = now
+                try:
+                    for account in app.state.pool.accounts:
+                        await account.http.session_info()
+                    log.info("keepalive: successfully renewed 48h/30d muse.ai session cookies")
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("keepalive cookie renewal failed: %s", exc)
+
+            idle_threshold = settings.idle_sleep_seconds
             if idle_threshold > 0:
                 idle_time = now - getattr(app.state, "last_active_at", app.state.started_at)
                 if idle_time >= idle_threshold:
                     if not getattr(app.state, "is_sleeping", False):
                         app.state.is_sleeping = True
                         log.info(
-                            "idle sleep: no activity for %ds (threshold %ds); pausing keepalive",
+                            "idle sleep: no activity for %ds (threshold %ds); pausing WebSocket keepalive",
                             int(idle_time), int(idle_threshold),
                         )
                         try:
@@ -459,7 +471,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         except Exception as exc:  # noqa: BLE001
                             log.debug("error closing idle pool: %s", exc)
                     continue
-
             # Awake: refresh if it's been 30m since last refresh
             if now - last_refresh >= 30 * 60:
                 last_refresh = now
@@ -1073,10 +1084,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 name = app.state.media.save(raw, ref.extension)
                 entry: dict[str, Any] = {"revised_prompt": ref.label or prompt,
                                          "kind": "image"}
-                if response_format == "b64_json":
-                    entry["b64_json"] = base64.b64encode(raw).decode("ascii")
-                else:
-                    entry["url"] = app.state.media.url_for(name)
+                entry["b64_json"] = base64.b64encode(raw).decode("ascii")
+                entry["url"] = app.state.media.url_for(name)
                 entry["bytes"] = len(raw)
                 data.append(entry)
         finally:
@@ -1151,10 +1160,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         name = app.state.media.save(raw_out, ref.extension)
         entry: dict[str, Any] = {"revised_prompt": ref.label or prompt, "kind": "image",
                                  "bytes": len(raw_out)}
-        if response_format == "b64_json":
-            entry["b64_json"] = base64.b64encode(raw_out).decode("ascii")
-        else:
-            entry["url"] = app.state.media.url_for(name)
+        entry["b64_json"] = base64.b64encode(raw_out).decode("ascii")
+        entry["url"] = app.state.media.url_for(name)
         return {"created": int(time.time()), "data": [entry]}
 
     # ------------------------------------------------------------------ videos
