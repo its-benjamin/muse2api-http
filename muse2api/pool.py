@@ -147,6 +147,14 @@ class AccountPool:
             for account in self.accounts
         ]
 
+    async def close_idle(self) -> None:
+        """Close open HTTP sessions during idle sleep."""
+        for account in self.accounts:
+            try:
+                await account.http.close()
+            except Exception:
+                pass
+
     async def close(self) -> None:
         for account in self.accounts:
             await account.http.close()

@@ -402,6 +402,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.sem = asyncio.Semaphore(int(__import__("os").environ.get("MUSE2API_CONCURRENCY", "2")))
         app.state.locks = {}
         app.state.started_at = time.time()
+        app.state.last_active_at = time.time()
+        app.state.is_sleeping = False
         keepalive = asyncio.create_task(_keepalive(app))
 
         try:
@@ -430,14 +432,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def _track_activity(request: Request, call_next):
+        if request.url.path.startswith("/v1/"):
+            app.state.last_active_at = time.time()
+            app.state.is_sleeping = False
+        return await call_next(request)
+
     async def _keepalive(app: FastAPI) -> None:
+        last_refresh = time.time()
         while True:
-            await asyncio.sleep(30 * 60)
-            try:
-                await app.state.pool.refresh_all()
-                log.info("keepalive: refreshed muse.ai sessions")
-            except Exception as exc:  # noqa: BLE001
-                log.warning("keepalive failed: %s", exc)
+            await asyncio.sleep(60)
+            idle_threshold = settings.idle_sleep_seconds
+            now = time.time()
+            if idle_threshold > 0:
+                idle_time = now - getattr(app.state, "last_active_at", app.state.started_at)
+                if idle_time >= idle_threshold:
+                    if not getattr(app.state, "is_sleeping", False):
+                        app.state.is_sleeping = True
+                        log.info(
+                            "idle sleep: no activity for %ds (threshold %ds); pausing keepalive",
+                            int(idle_time), int(idle_threshold),
+                        )
+                        try:
+                            await app.state.pool.close_idle()
+                        except Exception as exc:  # noqa: BLE001
+                            log.debug("error closing idle pool: %s", exc)
+                    continue
+
+            # Awake: refresh if it's been 30m since last refresh
+            if now - last_refresh >= 30 * 60:
+                last_refresh = now
+                try:
+                    await app.state.pool.refresh_all()
+                    log.info("keepalive: refreshed muse.ai sessions")
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("keepalive failed: %s", exc)
 
     def check_auth(request: Request) -> None:
         if not settings.api_key:
@@ -505,12 +535,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def healthz():
         pool: AccountPool = app.state.pool
         primary = app.state.http
+        now = time.time()
+        idle_s = int(now - getattr(app.state, "last_active_at", app.state.started_at))
+        is_sleeping = getattr(app.state, "is_sleeping", False)
         return {
             "ok": primary._cached_session is not None,
             "mode": settings.session_mode,
             "vm_id": primary._cached_session.vm_id if primary._cached_session else None,
             "accounts": pool.status(),
-            "uptime_s": int(time.time() - app.state.started_at),
+            "uptime_s": int(now - app.state.started_at),
+            "idle_s": idle_s,
+            "sleeping": is_sleeping,
         }
 
     @app.get("/v1/models")

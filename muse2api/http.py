@@ -74,27 +74,39 @@ class MuseHTTP:
                 "missing hatch_sess cookie; export fresh cookies from a logged-in muse.ai tab"
             )
         self._http_version = _parse_http_version(settings.http_version)
-        self._client = AsyncSession(
-            impersonate=settings.impersonate,
-            timeout=settings.request_timeout,
+        self._client: AsyncSession | None = self._create_client()
+        self._cached_session: GatewaySession | None = None
+        self._cached_at = 0.0
+
+    def _create_client(self) -> AsyncSession:
+        return AsyncSession(
+            impersonate=self.settings.impersonate,
+            timeout=self.settings.request_timeout,
             http_version=self._http_version,
             max_clients=50,
             retry=2,
             cookies=self.jar.copy(),
         )
-        self._cached_session: GatewaySession | None = None
-        self._cached_at = 0.0
 
     @property
     def client(self) -> AsyncSession:
+        if self._client is None:
+            self._client = self._create_client()
         return self._client
 
     async def close(self) -> None:
-        await self._client.close()
+        if self._client is not None:
+            try:
+                await self._client.close()
+            except Exception:
+                pass
+            self._client = None
 
     # -- low level ---------------------------------------------------------
 
     def _merge_cookies(self) -> None:
+        if self._client is None:
+            return
         try:
             for cookie in self._client.cookies.jar:
                 if cookie.name and cookie.value:
