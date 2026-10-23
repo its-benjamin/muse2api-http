@@ -1,0 +1,380 @@
+{
+  "lb_host": "hatch.metaaivm.com",
+  "ws_path": "/v1/noise",
+  "app_id": "hatch-web",
+  "routes": {
+    "connection.ping": {
+      "httpMethod": "POST",
+      "path": "/api/ping"
+    },
+    "model.get": {
+      "httpMethod": "GET",
+      "path": "/model"
+    },
+    "sessions.list": {
+      "httpMethod": "GET",
+      "path": "/api/session/list"
+    },
+    "nodes.register": {
+      "httpMethod": "POST",
+      "path": "/api/nodes/register"
+    },
+    "client.register_capabilities": {
+      "httpMethod": "POST",
+      "path": "/client/register-capabilities"
+    },
+    "chat.stream": {
+      "httpMethod": "POST",
+      "path": "/chat/stream",
+      "streamMode": "subscription"
+    },
+    "chat.subscribe": {
+      "httpMethod": "POST",
+      "path": "/chat/subscribe",
+      "streamMode": "subscription"
+    },
+    "chat.history": {
+      "httpMethod": "GET",
+      "path": "/chat/history"
+    },
+    "browser_task.clipboard.readiness": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/clipboard/readiness"
+    },
+    "browser_task.clipboard.copy": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/clipboard/copy"
+    },
+    "browser_task.clipboard.paste": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/clipboard/paste"
+    },
+    "email.mailbox.get": {
+      "httpMethod": "GET",
+      "path": "/api/email/mailbox",
+      "service": "daemon"
+    },
+    "email.mailbox.setup": {
+      "httpMethod": "GET",
+      "path": "/api/email/mailbox/setup",
+      "service": "daemon"
+    },
+    "email.mailbox.create": {
+      "httpMethod": "POST",
+      "path": "/api/email/mailbox",
+      "service": "daemon"
+    },
+    "email.mailbox.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/email/mailbox",
+      "service": "daemon"
+    },
+    "email.messages.get": {
+      "httpMethod": "GET",
+      "path": "/api/email/messages/{message_id}",
+      "service": "daemon"
+    },
+    "email.messages.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/email/messages/{message_id}",
+      "service": "daemon"
+    },
+    "email.attachment.get": {
+      "httpMethod": "GET",
+      "path": "/api/email/messages/{message_id}/attachments/{index}",
+      "service": "daemon"
+    },
+    "email.threads.list": {
+      "httpMethod": "GET",
+      "path": "/api/email/threads",
+      "service": "daemon"
+    },
+    "email.threads.get": {
+      "httpMethod": "GET",
+      "path": "/api/email/threads/{thread_id}",
+      "service": "daemon"
+    },
+    "email.owner_challenges.create": {
+      "httpMethod": "POST",
+      "path": "/api/email/owners/challenges",
+      "service": "daemon"
+    },
+    "email.owner_challenges.verify": {
+      "httpMethod": "POST",
+      "path": "/api/email/owners/challenges/{challenge_id}/verify",
+      "service": "daemon"
+    },
+    "email.owner_candidates.list": {
+      "httpMethod": "GET",
+      "path": "/api/email/owner-candidates",
+      "service": "daemon"
+    },
+    "sharing.eligibility": {
+      "httpMethod": "GET",
+      "path": "/api/sharing/eligibility",
+      "service": "daemon"
+    },
+    "sharing.attempt": {
+      "httpMethod": "POST",
+      "path": "/api/sharing/attempt",
+      "service": "daemon"
+    },
+    "shopping.product_details": {
+      "httpMethod": "GET",
+      "path": "/api/shopping",
+      "service": "daemon"
+    },
+    "shopping.cart": {
+      "httpMethod": "GET",
+      "path": "/api/shopping/cart",
+      "service": "daemon"
+    },
+    "shopping.events": {
+      "httpMethod": "POST",
+      "path": "/api/shopping/events",
+      "service": "daemon"
+    },
+    "hotels.results": {
+      "httpMethod": "GET",
+      "path": "/api/hotels/results",
+      "service": "daemon"
+    },
+    "hotels.details": {
+      "httpMethod": "GET",
+      "path": "/api/hotels/details",
+      "service": "daemon"
+    },
+    "hotels.events": {
+      "httpMethod": "POST",
+      "path": "/api/hotels/events",
+      "service": "daemon"
+    },
+    "credentials.list": {
+      "httpMethod": "GET",
+      "path": "/v1/credentials/list",
+      "service": "authd"
+    },
+    "credentials.catalog": {
+      "httpMethod": "GET",
+      "path": "/v1/credentials/catalog",
+      "service": "authd"
+    },
+    "credentials.catalog.details": {
+      "httpMethod": "GET",
+      "path": "/v1/credentials/catalog/details",
+      "service": "authd"
+    },
+    "credentials.catalog.update": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/catalog/update",
+      "service": "authd"
+    },
+    "credentials.catalog.delete": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/catalog/delete",
+      "service": "authd"
+    },
+    "credentials.register": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/register",
+      "service": "authd"
+    },
+    "credentials.capture": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/capture",
+      "service": "authd"
+    },
+    "credentials.capture.external_provider.request": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/capture/external-provider/request",
+      "service": "authd"
+    },
+    "credentials.capture.external_provider.fulfill": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/capture/external-provider/fulfill",
+      "service": "authd"
+    },
+    "credentials.delete": {
+      "httpMethod": "POST",
+      "path": "/v1/credentials/delete",
+      "service": "authd"
+    },
+    "ssh.operator.enable": {
+      "httpMethod": "POST",
+      "path": "/v1/ssh/operator/enable",
+      "service": "ssh_access"
+    },
+    "ssh.operator.disable": {
+      "httpMethod": "POST",
+      "path": "/v1/ssh/operator/disable",
+      "service": "ssh_access"
+    },
+    "oauth.callback": {
+      "httpMethod": "POST",
+      "path": "/oauth/callback",
+      "service": "authd"
+    },
+    "ac_oauth.callback": {
+      "httpMethod": "POST",
+      "path": "/ac_oauth/callback"
+    },
+    "github.installation.callback": {
+      "httpMethod": "POST",
+      "path": "/api/github/installation/callback"
+    },
+    "voice.user_speech_started": {
+      "httpMethod": "POST",
+      "path": "/api/voice/user-speech-started"
+    },
+    "voice.calls.user_speech": {
+      "httpMethod": "POST",
+      "path": "/api/voice/calls/user-speech"
+    },
+    "voice.active_voice": {
+      "httpMethod": "GET",
+      "path": "/api/voice/active-voice"
+    },
+    "voice.calls.media_endpoint": {
+      "httpMethod": "GET",
+      "path": "/api/voice/calls/media-endpoint"
+    },
+    "voice.available_voices": {
+      "httpMethod": "GET",
+      "path": "/api/voice/available-voices"
+    },
+    "voice.catalog": {
+      "httpMethod": "GET",
+      "path": "/api/voice/catalog"
+    },
+    "voice.catalog_filters": {
+      "httpMethod": "GET",
+      "path": "/api/voice/catalog/filters"
+    },
+    "voice.custom_voices.list": {
+      "httpMethod": "GET",
+      "path": "/api/voice/custom-voices"
+    },
+    "voice.custom_voices.rename": {
+      "httpMethod": "PATCH",
+      "path": "/api/voice/custom-voices/{saved_voice_id}"
+    },
+    "voice.custom_voices.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/voice/custom-voices/{saved_voice_id}"
+    },
+    "voice.pipeline_profiles": {
+      "httpMethod": "GET",
+      "path": "/api/voice/pipeline-profiles"
+    },
+    "voice.select_pipeline_profile": {
+      "httpMethod": "POST",
+      "path": "/api/voice/pipeline-profile"
+    },
+    "voice.avatar_video.prepare": {
+      "httpMethod": "POST",
+      "path": "/api/voice/avatar-video/prepare"
+    },
+    "client.runtime_state": {
+      "httpMethod": "POST",
+      "path": "/api/client/runtime-state"
+    },
+    "voice.start_call": {
+      "httpMethod": "POST",
+      "path": "/api/voice/start-call"
+    },
+    "voice.end_call": {
+      "httpMethod": "POST",
+      "path": "/api/voice/end-call"
+    },
+    "voice.onboarding.reset": {
+      "httpMethod": "POST",
+      "path": "/api/voice/onboarding/reset"
+    },
+    "browser_task.refresh_environment": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/refresh-environment"
+    },
+    "browser_task.end_and_release": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/end-and-release"
+    },
+    "browser_task.lease_info": {
+      "httpMethod": "GET",
+      "path": "/api/browser-task/{task_id}/lease"
+    },
+    "browser.debug_access.get": {
+      "httpMethod": "GET",
+      "path": "/api/browser/debug-access"
+    },
+    "browser.lease_overrides.get": {
+      "httpMethod": "GET",
+      "path": "/api/browser/lease-overrides"
+    },
+    "browser.lease_overrides.set": {
+      "httpMethod": "PATCH",
+      "path": "/api/browser/lease-overrides"
+    },
+    "browser.lease_overrides.release": {
+      "httpMethod": "POST",
+      "path": "/api/browser/lease-overrides/release"
+    },
+    "search.debug_overrides.get": {
+      "httpMethod": "GET",
+      "path": "/api/search/debug-overrides",
+      "service": "sentinel"
+    },
+    "search.debug_overrides.set": {
+      "httpMethod": "PATCH",
+      "path": "/api/search/debug-overrides",
+      "service": "sentinel"
+    },
+    "egress.approvals": {
+      "httpMethod": "GET",
+      "path": "/approvals",
+      "service": "sentinel"
+    },
+    "egress.approval": {
+      "httpMethod": "GET",
+      "path": "/approvals/{approval_id}",
+      "service": "sentinel"
+    },
+    "egress.approval.editable_message": {
+      "httpMethod": "GET",
+      "path": "/approvals/{approval_id}/editable-message",
+      "service": "sentinel"
+    },
+    "egress.approval.decide": {
+      "httpMethod": "POST",
+      "path": "/approvals/{approval_id}/decide",
+      "service": "sentinel"
+    },
+    "egress.approval.edit_message": {
+      "httpMethod": "POST",
+      "path": "/approvals/{approval_id}/edit-message",
+      "service": "sentinel"
+    },
+    "egress.approval.history": {
+      "httpMethod": "GET",
+      "path": "/approvals/history",
+      "service": "sentinel"
+    },
+    "tasks.list": {
+      "httpMethod": "GET",
+      "path": "/tasks"
+    },
+    "tasks.runs": {
+      "httpMethod": "GET",
+      "path": "/tasks/runs"
+    },
+    "tasks.run": {
+      "httpMethod": "POST",
+      "path": "/tasks/{job_id}/run"
+    },
+    "tasks.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/tasks/{job_id}"
+    }
+  },
+  "generated_at": "2026-10-23T08:14:40.587793+00:00",
+  "source": "baseline: captured muse.ai web bundle (2026-10-23)"
+}

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+.muse-state/
+.tmp/
+data/
+capture/
+rea/
+cookies*.txt
+*.har
+*.log
+
+reference/
+references/
