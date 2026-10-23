@@ -29,6 +29,11 @@ class Settings:
     listen_ms: int = 90_000
     cache_session_seconds: float = 45.0
     log_level: str = "info"
+    # Opt-in: answer agent permission prompts for the waiting chat thread.
+    # off | allow_once | allow_session | deny  (account-wide settings untouched)
+    approval_policy: str = "off"
+    # Prefix for generated media URLs, e.g. https://api.example.com/v1/media
+    public_base: str | None = None
     # Optional confidential-VM credentials. Standard VMs ignore both.
     cvm_rv_key: str | None = None
     attestation_cmd: str | None = None
@@ -55,6 +60,8 @@ class Settings:
             listen_ms=int(os.environ.get("MUSE_LISTEN_MS", "90000")),
             cache_session_seconds=float(os.environ.get("MUSE_SESSION_CACHE", "45")),
             log_level=os.environ.get("MUSE_LOG_LEVEL", os.environ.get("LOG_LEVEL", "info")),
+            approval_policy=os.environ.get("MUSE2API_APPROVAL_POLICY", "off").strip().lower(),
+            public_base=os.environ.get("MUSE2API_PUBLIC_BASE") or None,
             cvm_rv_key=os.environ.get("MUSE_CVM_RV_KEY") or None,
             attestation_cmd=os.environ.get("MUSE_ATTESTATION_CMD") or None,
             impersonate=os.environ.get("MUSE_IMPERSONATE", "chrome"),

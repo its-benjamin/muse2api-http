@@ -13,11 +13,11 @@ a captured HAR and the public Next.js bundle. `rea/` is a local working copy
 
 | Surface | Behaviour |
 |---|---|
-| `POST /v1/chat/completions` | Streaming and non-streaming text chat, multi-turn per API session, tools/vision message parts normalized |
+| `POST /v1/chat/completions` | Streaming and non-streaming text chat, multi-turn per API session (`x-muse-session` isolates callers) |
 | `POST /v1/responses` | Codex-style Responses API adapter over the same chat backend |
 | `POST /v1/images/generations` | Text-to-image; returns a hosted media URL (and `b64_json` when requested) |
 | `POST /v1/images/edits` | Image edit / image-to-image with reference images |
-| `POST /v1/videos` | Text-to-video and first-frame image-to-video, async task id |
+| `POST /v1/videos` | Text-to-video and first-frame image-to-video (`reference_image`, `image_url` or `image` as URL/data-URI/base64), async task id |
 | `GET /v1/videos/{id}` | Poll video status; completed tasks return the media URL |
 | `GET /v1/media/{name}`, `/media/{name}` | Local cache for generated media |
 | `GET /healthz` | Per-account health, VM id, uptime |
@@ -57,6 +57,40 @@ print(client.chat.completions.create(
     messages=[{"role": "user", "content": "hello"}],
 ).choices[0].message.content)
 ```
+
+## Sessions and permissions
+
+Each API conversation maps to one server-side muse side-chat. Send
+`x-muse-session: <conversation-id>` to give every caller its own thread; without
+it, clients share the `default` thread (and, when `MUSE2API_KEY` is set, the
+bearer token cannot distinguish them).
+
+Muse pauses agent work on permission prompts (network egress, connectors,
+browser actions, purchases). The HTTP API has no UI to answer them, so a turn
+that triggers one would wait until `MUSE_CHAT_TIMEOUT`. Set an explicit policy
+to answer prompts that are scoped to the waiting thread:
+
+```bash
+MUSE2API_APPROVAL_POLICY=allow_once   # off | allow_once | allow_session | deny
+```
+
+- `off` (default): never answer; the upstream turn may time out.
+- `allow_once`: approve the weakest one-shot option the server offers.
+- `allow_session`: prefer a session grant, falling back to one-shot.
+- `deny`: refuse, letting the assistant report the refusal.
+
+Only approvals whose `scope.thread_id` (or `scope.session_scope_id`) matches the
+current chat are touched (thread mode, the default). Account-wide HITL
+settings, connector OAuth consent, and the `/api/consent/status` web flow are
+**not** modified; connector setup still requires the browser. Auto-approval is security-sensitive: enable it only
+for an account whose data and network access you are willing to expose to the
+model.
+
+## Media URLs
+
+Generated URLs are relative by default. Set `MUSE2API_PUBLIC_BASE` (for example
+`https://api.example.com/v1/media`) when clients cannot resolve `/v1/media/...`
+against the API host. The `/v1/media/{name}` route itself stays the same.
 
 ## Accounts
 
@@ -142,6 +176,9 @@ random headers:
 | `MUSE_MODEL` | `muse-spark` | Advertised model id |
 | `MUSE_SESSION_MODE` | `thread` | `thread` or `main` |
 | `MUSE_CHAT_TIMEOUT` | `300` | Reply deadline, seconds |
+| `MUSE2API_APPROVAL_POLICY` | `off` | `off`, `allow_once`, `allow_session`, or `deny` agent permission prompts |
+| `MUSE2API_PUBLIC_BASE` | unset | Absolute prefix for generated media URLs |
+| `MUSE_VIDEO_BLOCK_SECONDS` | `21600` | Suppress new video tasks after a region refusal |
 | `MUSE_SESSION_CACHE` | `45` | Bootstrap cache, seconds |
 | `MUSE_STATE_DIR` | `.muse-state` | Local session/media state |
 | `MUSE_LB_HOST` / `MUSE_WS_PATH` / `MUSE_APP_ID` | discovered | Gateway overrides |
@@ -150,6 +187,26 @@ random headers:
 | `MUSE_IMPERSONATE` | `chrome` | curl_cffi profile alias; pin a version if needed |
 | `MUSE_HTTP_VERSION` | `auto` | `auto`, `2`, `3`, `1.1` |
 | `MUSE_USER_AGENT` | profile | Optional UA override |
+
+## Known limits
+
+- **No native function calling.** The upstream protocol exposes agent tools but
+  not an OpenAI `tools` schema. `tools`/`tool_choice` are ignored; Responses
+  output contains text only (no `function_call` items).
+- **Video is account/region gated.** When muse refuses ("not available for your
+  account in your country or region"), the task fails with
+  `code: "video_unavailable_region"`, a stable `error`, and the model's prose
+  under `upstream_message`. The server then remembers the refusal for six hours
+  and rejects new `/v1/videos` calls immediately with HTTP 503 instead of
+  launching another doomed generation. The block is stored in
+  `.muse-state/video_block.json` and applies to the whole pool; delete that file
+  if you add an account from a supported region.
+- **Video tasks are in-memory.** IDs return 404 after a restart; the generated
+  file itself stays under `.muse-state/media`.
+- **Connector OAuth consent is not automated.** Only egress/network/connector
+  *action* approvals scoped to the running thread can be auto-answered.
+- **Chat context lives upstream.** Deleting `.muse-state/chat_sessions.json`
+  while the server is stopped forgets the mapping; the muse side-chat remains.
 
 ## Tests
 

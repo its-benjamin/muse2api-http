@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .approvals import POLICIES as APPROVAL_POLICIES, handle_pending
 from .config import Settings
 from .gateway import GatewayError, HatchConnection
 from .http import MuseHTTP
@@ -37,6 +38,9 @@ CAPABILITIES = [
 ]
 
 DEFAULT_SESSION_KEY = "default"
+# The upstream history can pause between assistant deltas; require a quiet
+# window before declaring a reply complete, otherwise long turns truncate.
+TEXT_SETTLE_SECONDS = 2.0
 
 
 @dataclass(slots=True)
@@ -195,6 +199,16 @@ class ChatService:
         self.pool = pool
         self.protocol = protocol or ProtocolConfig.load()
         self.sessions = SessionStore(settings.state_dir / "chat_sessions.json")
+        self.approval_policy = (
+            settings.approval_policy
+            if settings.approval_policy in APPROVAL_POLICIES
+            else "off"
+        )
+        if settings.approval_policy not in APPROVAL_POLICIES:
+            log.warning(
+                "unknown approval policy %r; permission prompts stay unhandled",
+                settings.approval_policy,
+            )
 
     async def run(
         self,
@@ -204,15 +218,19 @@ class ChatService:
         session_key_value: str = DEFAULT_SESSION_KEY,
         timeout: float | None = None,
         want_media: bool = False,
+        items: list[dict] | None = None,
     ) -> ChatResult:
         if not prompt.strip():
             raise ValueError("prompt is empty")
         timeout = timeout or self.settings.chat_timeout
         if self.settings.session_mode == "main":
-            return await self._run_main(prompt, on_delta=on_delta, timeout=timeout)
+            return await self._run_main(
+                prompt, on_delta=on_delta, timeout=timeout, items=items
+            )
         state = self.sessions.get(session_key_value)
         return await self._run_thread(
-            prompt, state, on_delta=on_delta, timeout=timeout, want_media=want_media
+            prompt, state, on_delta=on_delta, timeout=timeout, want_media=want_media,
+            items=items,
         )
 
     async def run_with_media(
@@ -222,6 +240,7 @@ class ChatService:
         kind: str = "image",
         timeout: float | None = None,
         items: list[dict] | None = None,
+        refusal_markers: tuple[str, ...] = (),
     ) -> ChatResult:
         """Generate media in a throwaway thread and collect the artifacts."""
         state = self.sessions.get(f"media:{kind}:{uuid.uuid4()}")
@@ -232,6 +251,7 @@ class ChatService:
             timeout=timeout or self.settings.chat_timeout,
             want_media=True,
             items=items,
+            refusal_markers=refusal_markers,
         )
 
     # -- thread mode -------------------------------------------------------
@@ -245,6 +265,7 @@ class ChatService:
         timeout: float,
         want_media: bool = False,
         items: list[dict] | None = None,
+        refusal_markers: tuple[str, ...] = (),
     ) -> ChatResult:
         _account, _session, conn = await self.pool.connect()
         try:
@@ -275,6 +296,7 @@ class ChatService:
                 on_delta=on_delta,
                 timeout=timeout,
                 want_media=want_media,
+                refusal_markers=refusal_markers,
             )
             if not reply and not media:
                 raise GatewayError("muse returned an empty reply")
@@ -297,6 +319,7 @@ class ChatService:
         on_delta: Callable[[str], None] | None,
         timeout: float,
         want_media: bool = False,
+        refusal_markers: tuple[str, ...] = (),
     ) -> tuple[str, str, list[dict], list[MediaRef]]:
         deadline = time.monotonic() + timeout
         last_text: str | None = None
@@ -308,10 +331,26 @@ class ChatService:
         captured: list[dict] = []
         media: list[MediaRef] = []
         media_signature: tuple[str, ...] | None = None
+        media_stable_at: float | None = None
         text_stable_at: float | None = None
+        next_approval_check = 0.0
+
+        async def approval_hold() -> bool:
+            """Answer prompts before declaring the turn finished."""
+            if self.approval_policy == "off":
+                return False
+            handled = await handle_pending(conn, session_id, self.approval_policy)
+            if handled:
+                log.info("answered %d permission prompt(s) for %s", handled, session_id)
+            return handled > 0
 
         while time.monotonic() < deadline:
             polls += 1
+            if self.approval_policy != "off" and time.monotonic() >= next_approval_check:
+                next_approval_check = time.monotonic() + 4.0
+                handled = await handle_pending(conn, session_id, self.approval_policy)
+                if handled:
+                    log.info("answered %d permission prompt(s) for %s", handled, session_id)
             try:
                 response = await conn.request(
                     "GET",
@@ -388,17 +427,42 @@ class ChatService:
                 last_text = None
                 text_stable_at = None
 
+            if (refusal_markers and not media and current_text
+                    and any(marker in current_text.lower() for marker in refusal_markers)):
+                # The upstream model already refused; do not wait out the
+                # artifact grace period for a file that will never arrive.
+                return best, best_id, captured, media
+
             if want_media:
                 signature = tuple(sorted(ref.identity for ref in media))
                 if media and signature == media_signature:
-                    if text_stable_at is not None:
+                    if media_stable_at is None:
+                        media_stable_at = time.monotonic()
+                    settled = time.monotonic() - media_stable_at > 25.0
+                    text_settled = (
+                        text_stable_at is not None
+                        and time.monotonic() - text_stable_at > TEXT_SETTLE_SECONDS
+                    )
+                    if text_settled or settled:
+                        if await approval_hold():
+                            text_stable_at = None
+                            media_stable_at = None
+                            continue
                         return best, best_id, captured, media
                 elif media:
                     media_signature = signature
-                elif text_stable_at is not None and time.monotonic() - text_stable_at > 25.0:
-                    # Text settled but no artifact arrived; surface what we have.
-                    return best, best_id, captured, media
-            elif text_stable_at is not None:
+                    media_stable_at = time.monotonic()
+                else:
+                    media_stable_at = None
+                    if text_stable_at is not None and time.monotonic() - text_stable_at > 25.0:
+                        # Text settled but no artifact arrived; surface what we have.
+                        return best, best_id, captured, media
+            elif (text_stable_at is not None
+                  and time.monotonic() - text_stable_at > TEXT_SETTLE_SECONDS):
+                if await approval_hold():
+                    text_stable_at = None
+                    last_text = None
+                    continue
                 return best, best_id, captured, media
 
             # Ignore a false "stable" on the first snapshot.
@@ -455,7 +519,7 @@ class ChatService:
                 self.protocol.route("chat.stream").path,
                 {
                     "message": prompt,
-                    "items": [{"type": "text", "text": prompt}],
+                    "items": items or [{"type": "text", "text": prompt}],
                     "node_id": client_id,
                     "capabilities": CAPABILITIES,
                     "timezone": self.settings.timezone,

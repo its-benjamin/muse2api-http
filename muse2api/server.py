@@ -33,12 +33,81 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .chat import ChatResult, ChatService, session_key
 from .config import Settings
+from .gateway import GatewayError
 from .http import MuseAuthError, MuseHTTP, MuseUpstreamError
 from .media import MediaRef, MediaStore, download_media
 from .pool import AccountPool
 from .protocol import ProtocolConfig
+from .tool_bridge import (
+    apply_tool_bridge,
+    build_tool_instructions,
+    build_tool_reminder,
+    render_tool_transcript,
+    tools_active,
+)
 
 log = logging.getLogger("muse2api.server")
+
+_VIDEO_REGION_HINTS = (
+    "not available for your account",
+    "available for your account in your country or region",
+    "country or region",
+    "lasting restriction",
+)
+_VIDEO_QUOTA_HINTS = ("quota", "credits", "limit reached")
+_VIDEO_REFUSAL_MARKERS = _VIDEO_REGION_HINTS + _VIDEO_QUOTA_HINTS
+
+
+VIDEO_ERROR_MESSAGES = {
+    "video_unavailable_region": (
+        "Video generation is not available for this account or region. "
+        "The restriction is permanent; text and image generation still work."
+    ),
+    "video_quota_exhausted": (
+        "Video generation quota is exhausted for this account. "
+        "Add credits or configure another account."
+    ),
+    "video_generation_failed": "Video generation failed.",
+}
+
+
+def video_failure(code: str, upstream: str | None) -> dict[str, str]:
+    """Stable, client-facing failure fields; keep model prose out of `error`."""
+    payload = {"error": VIDEO_ERROR_MESSAGES.get(code, VIDEO_ERROR_MESSAGES["video_generation_failed"]),
+               "code": code}
+    if upstream and upstream.strip():
+        payload["upstream_message"] = upstream.strip()[:1000]
+    return payload
+
+
+def load_video_block(path: Path) -> float:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        until = float(data.get("until", 0))
+    except Exception:  # noqa: BLE001 - a corrupt cache must not block video
+        return 0.0
+    return until if until > time.time() else 0.0
+
+
+def save_video_block(path: Path, until: float) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"until": until, "reason": "video_unavailable_region"}),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001 - best effort
+        log.debug("could not persist video block: %s", exc)
+
+
+def classify_video_error(text: str) -> str:
+    """Turn the model's prose refusal into a stable API error code."""
+    lowered = text.lower()
+    if any(hint in lowered for hint in _VIDEO_REGION_HINTS):
+        return "video_unavailable_region"
+    if "quota" in lowered or "credits" in lowered or "limit reached" in lowered:
+        return "video_quota_exhausted"
+    return "video_generation_failed"
 
 MODEL_ALIASES = {
     "muse-spark",
@@ -70,6 +139,89 @@ def error_response(message: str, *, status: int = 400, type_: str = "invalid_req
     )
 
 
+_MAX_REFERENCE_BYTES = 25 * 1024 * 1024
+_DATA_URI_HEADER = "data:"
+
+
+async def reference_image_item(value: Any) -> dict[str, Any] | None:
+    """Normalize an image reference (URL, data URI, base64 or dict) to an item."""
+    url: str | None = None
+    encoded: str | None = None
+    mime: str | None = None
+    if isinstance(value, dict):
+        raw_url = value.get("url")
+        if isinstance(raw_url, str) and raw_url.startswith(("http://", "https://")):
+            url = raw_url
+        raw_data = value.get("b64_json") or value.get("base64") or value.get("data")
+        if isinstance(raw_data, str):
+            encoded = raw_data
+        raw_mime = value.get("mime_type") or value.get("mime")
+        if isinstance(raw_mime, str):
+            mime = raw_mime
+    elif isinstance(value, str):
+        text = value.strip()
+        if text.startswith(("http://", "https://")):
+            url = text
+        elif text.startswith(_DATA_URI_HEADER):
+            header, _, payload = text.partition(",")
+            if ";base64" not in header:
+                raise ApiError("image data URI must be base64 encoded")
+            mime = header[len(_DATA_URI_HEADER):].split(";", 1)[0] or "image/png"
+            encoded = payload
+        else:
+            encoded = text
+    if url is None and encoded is None:
+        return None
+    if url is not None:
+        try:
+            from curl_cffi.requests import AsyncSession
+
+            async with AsyncSession(impersonate="chrome", timeout=90) as client:
+                response = await client.get(url)
+                if not (200 <= response.status_code < 300):
+                    raise ApiError(
+                        f"could not download reference image: HTTP {response.status_code}",
+                        status=400, code="invalid_image",
+                    )
+                data = response.content
+                mime = response.headers.get("content-type") or mime
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError(
+                f"could not download reference image: {exc}",
+                status=400, code="invalid_image",
+            ) from exc
+    else:
+        try:
+            data = base64.b64decode(encoded or "", validate=True)
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("reference image is not valid base64",
+                           code="invalid_image") from exc
+    if not data:
+        raise ApiError("reference image is empty", code="invalid_image")
+    if len(data) > _MAX_REFERENCE_BYTES:
+        raise ApiError("reference image exceeds 25 MiB", code="invalid_image")
+    mime = (mime or mimetypes.guess_type(url or "")[0] or "image/png").split(";", 1)[0]
+    if not mime.startswith("image/"):
+        raise ApiError("reference image must be an image", code="invalid_image")
+    return {
+        "type": "image",
+        "mime_type": mime,
+        "data_base64": base64.b64encode(data).decode("ascii"),
+        "filename": "reference" + (mimetypes.guess_extension(mime) or ".png"),
+    }
+
+
+async def first_video_reference(body: dict) -> dict[str, Any] | None:
+    for key in ("reference_image", "image_url", "image"):
+        if body.get(key) is not None:
+            item = await reference_image_item(body[key])
+            if item is not None:
+                return item
+    return None
+
+
 def content_text(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -94,12 +246,56 @@ def content_text(value: Any) -> str:
 def flatten_messages(messages: list[dict]) -> str:
     lines: list[str] = []
     for message in messages:
+        rendered = render_tool_transcript([message])
+        if rendered:
+            lines.extend(rendered)
+            continue
         role = str(message.get("role") or "user")
         text = content_text(message.get("content"))
         if not text.strip():
             continue
         lines.append(f"{role}: {text.strip()}")
     return "\n\n".join(lines)
+
+
+async def latest_user_images(messages: list[dict]) -> list[dict]:
+    """Convert image parts of the newest user turn into attachment items."""
+    for message in reversed(messages):
+        if str(message.get("role") or "") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            return []
+        items: list[dict] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            kind = part.get("type")
+            if kind == "image_url":
+                value = part.get("image_url")
+                if isinstance(value, dict):
+                    value = value.get("url")
+            elif kind == "input_image":
+                value = part.get("image_url") or part.get("url")
+            else:
+                continue
+            if value is None:
+                continue
+            item = await reference_image_item(value)
+            if item is not None:
+                items.append(item)
+            if len(items) >= 8:
+                return items
+        return items
+    return []
+
+
+def tool_prompt(body: dict, prompt: str) -> str:
+    if not tools_active(body):
+        return prompt
+    return (
+        f"{build_tool_instructions(body)}\n\n{prompt}\n\n{build_tool_reminder()}"
+    )
 
 
 def last_user_text(messages: list[dict]) -> str:
@@ -189,7 +385,7 @@ class TaskStore:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     media_root = Path(settings.state_dir.parent) / "data" / "media"
-    media = MediaStore(media_root, public_base="/v1/media")
+    media = MediaStore(media_root, public_base=settings.public_base or "/v1/media")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -224,6 +420,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await pool.close()
 
     app = FastAPI(title="muse2api-http", version="0.1.0", lifespan=lifespan)
+    video_block_file = settings.state_dir / "video_block.json"
+    app.state.video_block_file = video_block_file
+    app.state.video_block_until = load_video_block(video_block_file)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -277,6 +476,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(MuseUpstreamError)
     async def _upstream_error(_: Request, exc: MuseUpstreamError):
         return error_response(str(exc), status=502, type_="upstream_error", code="muse_upstream")
+
+    @app.exception_handler(GatewayError)
+    async def _gateway_error(_: Request, exc: GatewayError):
+        return error_response(
+            str(exc) or "muse gateway error",
+            status=502,
+            type_="upstream_error",
+            code="muse_gateway",
+        )
 
     # ------------------------------------------------------------------ misc
 
@@ -333,11 +541,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ chat
 
     async def _chat_once(request: Request, prompt: str, timeout: float,
-                         on_delta=None) -> ChatResult:
+                         on_delta=None, items: list[dict] | None = None) -> ChatResult:
         key = key_for(request)
         async with app.state.sem, lock_for(key):
             return await app.state.chat.run(
-                prompt, session_key_value=key, timeout=timeout, on_delta=on_delta
+                prompt, session_key_value=key, timeout=timeout, on_delta=on_delta,
+                items=items,
             )
 
     @app.post("/v1/chat/completions")
@@ -355,13 +564,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         key = key_for(request)
         state = app.state.chat.sessions.get(key)
-        try:
+        images = await latest_user_images(messages)
+        if last_user_text(messages):
             prompt = build_prompt(messages, state)
-        except ApiError:
-            raise
+        elif images:
+            system_text = "\n\n".join(
+                content_text(m.get("content")).strip()
+                for m in messages if str(m.get("role")) == "system"
+                and content_text(m.get("content")).strip()
+            )
+            fallback = "user: Describe the attached image."
+            prompt = f"System: {system_text}\n\n{fallback}" if system_text else fallback
+        else:
+            raise ApiError("no non-empty user message")
+        prompt = tool_prompt(body, prompt)
+        bridge_active = tools_active(body)
 
         if not stream:
-            result = await _chat_once(request, prompt, settings.chat_timeout)
+            result = await _chat_once(
+                request, prompt, settings.chat_timeout, items=images or None
+            )
             state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
             state.system_hash = hashlib.sha256(
                 "\n\n".join(content_text(m.get("content")).strip()
@@ -369,6 +591,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).hexdigest()[:16]
             state.last_system_sent = True
             app.state.chat.sessions._save()
+            message: dict[str, Any] = {"role": "assistant", "content": result.text}
+            finish_reason = "stop"
+            if bridge_active:
+                repaired = apply_tool_bridge(result.text, body)
+                if repaired["applied"]:
+                    message["content"] = repaired["content"] or None
+                    message["tool_calls"] = repaired["tool_calls"]
+                    finish_reason = "tool_calls"
             return {
                 "id": f"chatcmpl-{result.message_id}",
                 "object": "chat.completion",
@@ -376,8 +606,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "model": model,
                 "choices": [{
                     "index": 0,
-                    "message": {"role": "assistant", "content": result.text},
-                    "finish_reason": "stop",
+                    "message": message,
+                    "finish_reason": finish_reason,
                 }],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
             }
@@ -389,11 +619,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             queue: asyncio.Queue[Any] = asyncio.Queue()
 
             def push(chunk: str) -> None:
-                queue.put_nowait(("delta", chunk))
+                if not bridge_active:
+                    queue.put_nowait(("delta", chunk))
 
             async def runner() -> None:
                 try:
-                    result = await _chat_once(request, prompt, settings.chat_timeout, push)
+                    result = await _chat_once(
+                        request, prompt, settings.chat_timeout,
+                        None if bridge_active else push, items=images or None,
+                    )
                     state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
                     state.system_hash = hashlib.sha256(
                         "\n\n".join(content_text(m.get("content")).strip()
@@ -412,7 +646,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""},
                              "finish_reason": None}],
             })
+            finish_reason = "stop"
             try:
+                final: ChatResult | None = None
                 while True:
                     kind, value = await queue.get()
                     if kind == "delta":
@@ -423,14 +659,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                          "finish_reason": None}],
                         })
                     elif kind == "done":
+                        final = value
                         break
                     elif kind == "error":
                         raise value
+                if bridge_active and final is not None:
+                    repaired = apply_tool_bridge(final.text, body)
+                    if repaired["applied"]:
+                        for index, call in enumerate(repaired["tool_calls"]):
+                            yield sse({
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"tool_calls": [{
+                                        "index": index,
+                                        "id": call["id"],
+                                        "type": "function",
+                                        "function": call["function"],
+                                    }]},
+                                    "finish_reason": None,
+                                }],
+                            })
+                        finish_reason = "tool_calls"
+                    else:
+                        text = final.text
+                        for start in range(0, len(text), 400):
+                            yield sse({
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{"index": 0,
+                                             "delta": {"content": text[start:start + 400]},
+                                             "finish_reason": None}],
+                            })
                 yield sse({
                     "id": completion_id, "object": "chat.completion.chunk", "created": created,
                     "model": model,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
                 })
+                options = body.get("stream_options")
+                if isinstance(options, dict) and options.get("include_usage") is True:
+                    yield sse({
+                        "id": completion_id, "object": "chat.completion.chunk",
+                        "created": created, "model": model, "choices": [],
+                        "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                                  "total_tokens": 0},
+                    })
                 yield sse("[DONE]")
             except Exception as exc:  # noqa: BLE001
                 yield sse({"error": {"message": str(exc), "type": "server_error"}})
@@ -462,11 +738,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if isinstance(raw_input, str):
             messages = [{"role": "user", "content": raw_input}]
         elif isinstance(raw_input, list):
+            call_names: dict[str, str] = {}
             for item in raw_input:
                 if not isinstance(item, dict):
                     continue
-                if item.get("type") == "message":
+                kind = item.get("type")
+                if kind == "message":
                     messages.append({"role": item.get("role"), "content": item.get("content")})
+                elif kind == "function_call":
+                    call_id = str(item.get("call_id") or item.get("id") or "")
+                    name = str(item.get("name") or "")
+                    if call_id:
+                        call_names[call_id] = name
+                    messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": call_id or "call_" + uuid.uuid4().hex,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": item.get("arguments") or "{}",
+                            },
+                        }],
+                    })
+                elif kind == "function_call_output":
+                    call_id = str(item.get("call_id") or "")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": call_names.get(call_id),
+                        "content": item.get("output") if isinstance(item.get("output"), str)
+                        else json.dumps(item.get("output"), ensure_ascii=False),
+                    })
                 elif "role" in item:
                     messages.append(item)
         instructions = body.get("instructions")
@@ -478,10 +782,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stream = body.get("stream") is True
         key = key_for(request)
         state = app.state.chat.sessions.get(key)
-        prompt = build_prompt(messages, state)
+        images = await latest_user_images(messages)
+        if last_user_text(messages):
+            prompt = build_prompt(messages, state)
+        elif images:
+            system_text = "\n\n".join(
+                content_text(m.get("content")).strip()
+                for m in messages if str(m.get("role")) == "system"
+                and content_text(m.get("content")).strip()
+            )
+            fallback = "user: Describe the attached image."
+            prompt = f"System: {system_text}\n\n{fallback}" if system_text else fallback
+        else:
+            raise ApiError("input must contain a non-empty user message")
+        prompt = tool_prompt(body, prompt)
+        bridge_active = tools_active(body)
 
         if not stream:
-            result = await _chat_once(request, prompt, settings.chat_timeout)
+            result = await _chat_once(
+                request, prompt, settings.chat_timeout, items=images or None
+            )
             state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
             state.system_hash = hashlib.sha256(
                 "\n\n".join(content_text(m.get("content")).strip()
@@ -489,18 +809,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).hexdigest()[:16]
             state.last_system_sent = True
             app.state.chat.sessions._save()
-            return _responses_payload(result.text, model, body.get("id") or "resp_" + uuid.uuid4().hex)
+            text = result.text
+            tool_calls = None
+            if bridge_active:
+                repaired = apply_tool_bridge(result.text, body)
+                if repaired["applied"]:
+                    text = repaired["content"]
+                    tool_calls = repaired["tool_calls"]
+            return _responses_payload(
+                text, model, body.get("id") or "resp_" + uuid.uuid4().hex,
+                tool_calls=tool_calls,
+            )
 
         response_id = "resp_" + uuid.uuid4().hex
 
         async def stream_responses() -> AsyncIterator[str]:
             created = int(time.time())
-            item_id = "msg_" + uuid.uuid4().hex
+            message_item_id = "msg_" + uuid.uuid4().hex
             queue: asyncio.Queue[Any] = asyncio.Queue()
+
+            def push(chunk: str) -> None:
+                if not bridge_active:
+                    queue.put_nowait(("delta", chunk))
 
             async def runner() -> None:
                 try:
-                    result = await _chat_once(request, prompt, settings.chat_timeout)
+                    result = await _chat_once(
+                        request, prompt, settings.chat_timeout,
+                        None if bridge_active else push, items=images or None,
+                    )
                     state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
                     state.system_hash = hashlib.sha256(
                         "\n\n".join(content_text(m.get("content")).strip()
@@ -516,53 +853,139 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             def ev(event: str, data: dict) -> str:
                 return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+            def message_events(text: str, output_index: int) -> list[str]:
+                events = [
+                    ev("response.output_item.added", {
+                        "type": "response.output_item.added",
+                        "output_index": output_index,
+                        "item": {"id": message_item_id, "type": "message",
+                                 "role": "assistant", "status": "in_progress", "content": []},
+                    }),
+                    ev("response.content_part.added", {
+                        "type": "response.content_part.added",
+                        "item_id": message_item_id, "output_index": output_index,
+                        "content_index": 0,
+                        "part": {"type": "output_text", "text": "", "annotations": []},
+                    }),
+                ]
+                for start in range(0, len(text), 400):
+                    events.append(ev("response.output_text.delta", {
+                        "type": "response.output_text.delta",
+                        "item_id": message_item_id, "output_index": output_index,
+                        "content_index": 0, "delta": text[start:start + 400],
+                    }))
+                events.extend([
+                    ev("response.output_text.done", {
+                        "type": "response.output_text.done",
+                        "item_id": message_item_id, "output_index": output_index,
+                        "content_index": 0, "text": text,
+                    }),
+                    ev("response.output_item.done", {
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": {"id": message_item_id, "type": "message",
+                                 "role": "assistant", "status": "completed",
+                                 "content": [{"type": "output_text", "text": text,
+                                              "annotations": []}]},
+                    }),
+                ])
+                return events
+
             base = {
                 "id": response_id, "object": "response", "created_at": created,
                 "status": "in_progress", "model": model, "output": [],
             }
             yield ev("response.created", {"type": "response.created", "response": base})
-            yield ev("response.output_item.added", {
-                "type": "response.output_item.added",
-                "output_index": 0,
-                "item": {"id": item_id, "type": "message", "role": "assistant",
-                         "status": "in_progress", "content": []},
-            })
-            yield ev("response.content_part.added", {
-                "type": "response.content_part.added",
-                "item_id": item_id, "output_index": 0, "content_index": 0,
-                "part": {"type": "output_text", "text": "", "annotations": []},
-            })
+            if not bridge_active:
+                yield ev("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {"id": message_item_id, "type": "message", "role": "assistant",
+                             "status": "in_progress", "content": []},
+                })
+                yield ev("response.content_part.added", {
+                    "type": "response.content_part.added",
+                    "item_id": message_item_id, "output_index": 0, "content_index": 0,
+                    "part": {"type": "output_text", "text": "", "annotations": []},
+                })
             full = ""
             try:
+                final: ChatResult | None = None
                 while True:
                     kind, value = await queue.get()
-                    if kind == "done":
-                        full = value.text
+                    if kind == "delta":
+                        full += value
+                        if not bridge_active:
+                            yield ev("response.output_text.delta", {
+                                "type": "response.output_text.delta",
+                                "item_id": message_item_id, "output_index": 0,
+                                "content_index": 0, "delta": value,
+                            })
+                    elif kind == "done":
+                        final = value
+                        break
                     elif kind == "error":
                         raise value
-                    break
-                for start in range(0, len(full), 400):
-                    chunk = full[start:start + 400]
-                    yield ev("response.output_text.delta", {
-                        "type": "response.output_text.delta",
-                        "item_id": item_id, "output_index": 0, "content_index": 0,
-                        "delta": chunk,
+
+                text = final.text if final is not None else full
+                tool_calls: list[dict] | None = None
+                if bridge_active and final is not None:
+                    repaired = apply_tool_bridge(text, body)
+                    if repaired["applied"]:
+                        text = repaired["content"]
+                        tool_calls = repaired["tool_calls"]
+                    if text.strip() or not tool_calls:
+                        for event in message_events(text, 0):
+                            yield event
+                else:
+                    yield ev("response.output_text.done", {
+                        "type": "response.output_text.done",
+                        "item_id": message_item_id, "output_index": 0, "content_index": 0,
+                        "text": text,
                     })
-                yield ev("response.output_text.done", {
-                    "type": "response.output_text.done",
-                    "item_id": item_id, "output_index": 0, "content_index": 0,
-                    "text": full,
-                })
-                yield ev("response.output_item.done", {
-                    "type": "response.output_item.done",
-                    "output_index": 0,
-                    "item": {"id": item_id, "type": "message", "role": "assistant",
-                             "status": "completed",
-                             "content": [{"type": "output_text", "text": full, "annotations": []}]},
-                })
+                    yield ev("response.output_item.done", {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": {"id": message_item_id, "type": "message",
+                                 "role": "assistant", "status": "completed",
+                                 "content": [{"type": "output_text", "text": text,
+                                              "annotations": []}]},
+                    })
+
+                output_base = 1 if (bridge_active and text.strip()) else 0
+                for index, call in enumerate(tool_calls or []):
+                    fn = call.get("function") or {}
+                    args = fn.get("arguments") or "{}"
+                    fc_id = "fc_" + uuid.uuid4().hex
+                    output_index = output_base + index
+                    yield ev("response.output_item.added", {
+                        "type": "response.output_item.added",
+                        "output_index": output_index,
+                        "item": {"id": fc_id, "type": "function_call",
+                                 "call_id": call.get("id"), "name": fn.get("name") or "",
+                                 "arguments": "", "status": "in_progress"},
+                    })
+                    yield ev("response.function_call_arguments.delta", {
+                        "type": "response.function_call_arguments.delta",
+                        "item_id": fc_id, "output_index": output_index, "delta": args,
+                    })
+                    yield ev("response.function_call_arguments.done", {
+                        "type": "response.function_call_arguments.done",
+                        "item_id": fc_id, "output_index": output_index, "arguments": args,
+                    })
+                    yield ev("response.output_item.done", {
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": {"id": fc_id, "type": "function_call",
+                                 "call_id": call.get("id"), "name": fn.get("name") or "",
+                                 "arguments": args, "status": "completed"},
+                    })
+
                 yield ev("response.completed", {
                     "type": "response.completed",
-                    "response": _responses_payload(full, model, response_id, created),
+                    "response": _responses_payload(
+                        text, model, response_id, created, tool_calls=tool_calls
+                    ),
                 })
             except Exception as exc:  # noqa: BLE001
                 yield ev("response.failed", {
@@ -701,26 +1124,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ------------------------------------------------------------------ videos
 
-    async def _run_video_task(task: dict, prompt: str, duration: int, size: str) -> None:
+    async def _run_video_task(task: dict, prompt: str, duration: int, size: str,
+                              items: list[dict] | None = None) -> None:
         task["status"] = "running"
         task["progress"] = 5
         aspect = image_size_to_aspect(size)
+        framing = (
+            "Use the attached image as the first frame. "
+            if items else ""
+        )
         instruction = (
-            f"Generate a {duration} second video with aspect ratio {aspect} for the following "
-            "request. Use your video generation tool now, do not ask questions.\n\n" + prompt
+            f"{framing}Generate a {duration} second video with aspect ratio {aspect} for the "
+            "following request. Use your video generation tool now, do not ask questions.\n\n"
+            + prompt
         )
         try:
             async with app.state.sem:
                 result = await app.state.chat.run_with_media(
                     instruction, kind="video",
                     timeout=float(__import__("os").environ.get("MUSE_VIDEO_TIMEOUT", "600")),
+                    items=([*items, {"type": "text", "text": instruction}] if items else None),
+                    refusal_markers=_VIDEO_REFUSAL_MARKERS,
                 )
             task["progress"] = 70
             task["text"] = result.text
             videos = [ref for ref in result.media if ref.kind == "video"]
             if not videos:
+                code = classify_video_error(result.text or "")
                 task["status"] = "failed"
-                task["error"] = result.text or "muse did not return a video"
+                task.update(video_failure(code, result.text))
+                if code == "video_unavailable_region":
+                    app.state.video_block_until = time.time() + float(
+                        __import__("os").environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
+                    )
+                    save_video_block(app.state.video_block_file, app.state.video_block_until)
                 return
             _account, _session, conn = await app.state.pool.connect()
             try:
@@ -734,8 +1171,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             task["result"] = {"url": app.state.media.url_for(name),
                               "bytes": len(raw), "revised_prompt": ref.label or prompt}
         except Exception as exc:  # noqa: BLE001
+            code = classify_video_error(str(exc))
             task["status"] = "failed"
-            task["error"] = str(exc)
+            task.update(video_failure(code, str(exc)))
+            if code == "video_unavailable_region":
+                app.state.video_block_until = time.time() + float(
+                    __import__("os").environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
+                )
+                save_video_block(app.state.video_block_file, app.state.video_block_until)
 
     @app.post("/v1/videos")
     async def create_video(request: Request):
@@ -747,10 +1190,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ApiError("prompt is required")
+        if time.time() < getattr(app.state, "video_block_until", 0.0):
+            raise ApiError(
+                VIDEO_ERROR_MESSAGES["video_unavailable_region"],
+                status=503,
+                type_="upstream_error",
+                code="video_unavailable_region",
+            )
         duration = int(body.get("duration") or body.get("seconds") or 5)
-        size = str(body.get("size") or "16:9")
+        size = str(body.get("size") or body.get("aspect_ratio") or "16:9")
+        reference = await first_video_reference(body)
+        reference_items = [reference] if reference else []
         task = app.state.tasks.create("video")
-        asyncio.create_task(_run_video_task(task, prompt.strip(), duration, size))
+        asyncio.create_task(
+            _run_video_task(task, prompt.strip(), duration, size, reference_items)
+        )
         return {"id": task["id"], "object": task["object"], "status": "queued",
                 "created_at": task["created_at"]}
 
@@ -775,20 +1229,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-def _responses_payload(text: str, model: str, response_id: str, created: int | None = None) -> dict:
+def _responses_payload(text: str, model: str, response_id: str, created: int | None = None,
+                       tool_calls: list[dict] | None = None) -> dict:
+    output: list[dict] = []
+    if text.strip() or not tool_calls:
+        output.append({
+            "id": "msg_" + uuid.uuid4().hex,
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
+        })
+    for call in tool_calls or []:
+        fn = call.get("function") or {}
+        output.append({
+            "id": "fc_" + uuid.uuid4().hex,
+            "type": "function_call",
+            "call_id": call.get("id") or "call_" + uuid.uuid4().hex,
+            "name": fn.get("name") or "",
+            "arguments": fn.get("arguments") or "{}",
+            "status": "completed",
+        })
     return {
         "id": response_id,
         "object": "response",
         "created_at": created or int(time.time()),
         "status": "completed",
         "model": model,
-        "output": [{
-            "id": "msg_" + uuid.uuid4().hex,
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "content": [{"type": "output_text", "text": text, "annotations": []}],
-        }],
+        "output": output,
         "output_text": text,
         "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
     }
