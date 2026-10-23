@@ -40,7 +40,6 @@ BROWSER_UA = (
 # Exact header set Firefox uses for the gateway upgrade (captured HAR).
 WS_HEADERS = {
     "Origin": "https://muse.ai",
-    "User-Agent": BROWSER_UA,
     "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
     "Sec-Fetch-Dest": "empty",
@@ -213,7 +212,7 @@ class HatchConnection:
         cvm_rv_key: str | None = None,
         attestation_cmd: str | None = None,
         ws_client=None,
-        impersonate: str = "firefox",
+        impersonate: str = "chrome",
     ) -> "HatchConnection":
         url = session.websocket_url(lb_host=lb_host, path=ws_path)
         log.debug("connecting %s", url.split("?")[0])
@@ -241,7 +240,7 @@ class HatchConnection:
             ws = await ws_connect(
                 url,
                 origin=WS_HEADERS["Origin"],
-                user_agent_header=WS_HEADERS["User-Agent"],
+                user_agent_header=BROWSER_UA,
                 additional_headers={
                     key: value for key, value in WS_HEADERS.items()
                     if key not in ("Origin", "User-Agent")

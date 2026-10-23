@@ -21,9 +21,11 @@ from .gateway import GatewaySession
 log = logging.getLogger("muse2api.http")
 
 BASE = "https://muse.ai"
+# Only used by the stdlib-WebSocket fallback; curl_cffi sets the real UA from
+# the impersonation profile for both HTTP and WS.
 BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) "
-    "Gecko/20100101 Firefox/158.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 # Copied from the captured Firefox XHRs. curl_cffi owns TLS/HTTP2,
 # Accept-Encoding, Host and Connection; these are the application headers the
@@ -111,10 +113,9 @@ class MuseHTTP:
         require_ok: bool = True,
     ) -> dict:
         headers = dict(BASE_HEADERS)
-        # Keep one UA across HTTP, WebSocket and the exported cookie jar. The
-        # TLS profile is the closest Firefox build available; the UA may be a
-        # newer patch version, which browsers do produce after updates.
-        headers["User-Agent"] = self.settings.user_agent or BROWSER_UA
+        # Let the impersonation profile set the UA unless the operator pins one.
+        if self.settings.user_agent:
+            headers["User-Agent"] = self.settings.user_agent
         if json_body is not None:
             headers["Content-Type"] = "application/json"
         try:

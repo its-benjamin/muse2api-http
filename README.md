@@ -107,9 +107,14 @@ verifier trust anchors. Standard-VM accounts never enter this path.
 Stealth here means looking like the browser that owns the cookies, not adding
 random headers:
 
-- `curl_cffi` with `impersonate="firefox"` (the latest bundled Firefox profile) reproduces Firefox's TLS, HTTP/2
-  and HTTP/3 fingerprints. `MUSE_HTTP_VERSION=auto` negotiates HTTP/3 when the
-  edge advertises it; `2` or `3` pins it.
+- `curl_cffi` with `impersonate="chrome"` — the docs recommend the latest
+  Chrome/Safari alias — reproduces Chrome's TLS, HTTP/2 and HTTP/3
+  fingerprints. In curl_cffi 0.16.3 the alias resolves to Chrome 150, which
+  includes an HTTP/3 fingerprint. `MUSE_HTTP_VERSION=auto` lets the profile
+  negotiate h3; measured: HTTP/3 against muse.ai.
+- The UA comes from the impersonation profile for HTTP and the WebSocket
+  handshake, so both transports stay consistent. `MUSE_USER_AGENT` overrides it
+  if an account is bound to a specific browser.
 - Requests carry the captured Firefox XHR headers (`Accept: */*`,
   `Accept-Language`, `Origin`, `Referer`, `Sec-Fetch-*`, `Priority`,
   `Pragma`/`Cache-Control`, `TE: trailers`). Host, `Connection` and
@@ -121,11 +126,10 @@ random headers:
   header set (`Sec-Fetch-Mode: websocket`, `Sec-Fetch-Site: cross-site`,
   `Pragma`/`Cache-Control`). If that path ever fails, it falls back to the
   stdlib `websockets` client instead of dropping the request.
-- One UA is used for HTTP, the WebSocket upgrade and the cookie jar
-  (`MUSE_USER_AGENT` overrides it). The profile follows curl_cffi's latest
-  bundled Firefox (`firefox` alias); pin `MUSE_IMPERSONATE` if a specific build
-  is required. The UA may be a newer patch version, which is exactly what a
-  browser update looks like.
+- The UA is whatever the impersonation profile sets, on both HTTP and the
+  WebSocket upgrade; `MUSE_USER_AGENT` overrides it when an account is
+  UA-bound. The `chrome` alias tracks curl_cffi's latest bundled Chrome, which
+  also ships the HTTP/3 fingerprint.
 
 ## Configuration
 
@@ -143,8 +147,8 @@ random headers:
 | `MUSE_LB_HOST` / `MUSE_WS_PATH` / `MUSE_APP_ID` | discovered | Gateway overrides |
 | `MUSE_CVM_RV_KEY` | unset | CVM recovery key |
 | `MUSE_ATTESTATION_CMD` | unset | External attestation verifier |
-| `MUSE_IMPERSONATE` | `firefox` | curl_cffi profile alias; pin e.g. `firefox147` if needed |
-| `MUSE_HTTP_VERSION` | `auto` | `auto`, `1.1`, `2`, `3` |
+| `MUSE_IMPERSONATE` | `chrome` | curl_cffi profile alias; pin a version if needed |
+| `MUSE_HTTP_VERSION` | `auto` | `auto`, `2`, `3`, `1.1` |
 | `MUSE_USER_AGENT` | profile | Optional UA override |
 
 ## Tests
