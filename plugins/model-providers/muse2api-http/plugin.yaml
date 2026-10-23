@@ -1,0 +1,5 @@
+name: muse2api-http
+kind: model-provider
+version: 1.0.0
+description: "OpenAI-compatible bridge for muse.ai (muse-spark) via muse2api-http"
+author: muse2api-http
