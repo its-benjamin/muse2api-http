@@ -131,7 +131,7 @@ class MuseHTTP:
         if json_body is not None:
             headers["Content-Type"] = "application/json"
         try:
-            response = await self._client.request(
+            response = await self.client.request(
                 method.upper(),
                 BASE + path,
                 headers=headers,
@@ -304,10 +304,10 @@ class MuseHTTP:
         session = await self.bootstrap()
         try:
             conn = await HatchConnection.connect(
-                session, ws_client=self._client, impersonate=self.settings.impersonate)
+                session, ws_client=self.client, impersonate=self.settings.impersonate)
         except Exception:
             # Tokens are short-lived; force one re-bootstrap before surfacing.
             session = await self.bootstrap(force=True)
             conn = await HatchConnection.connect(
-                session, ws_client=self._client, impersonate=self.settings.impersonate)
+                session, ws_client=self.client, impersonate=self.settings.impersonate)
         return session, conn
