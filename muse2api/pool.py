@@ -31,6 +31,8 @@ class Account:
     healthy: bool = True
     cooldown_until: float = 0.0
     last_error: str | None = None
+    last_status: int | None = None
+    error_kind: str | None = None  # auth | forbidden | rate_limit | upstream | network
     uses: int = 0
     last_used: float = field(default_factory=time.time)
 
@@ -41,7 +43,31 @@ class Account:
         self.healthy = False
         self.cooldown_until = time.monotonic() + cooldown
         self.last_error = str(error)[:500]
-        log.warning("account %s unhealthy for %.0fs: %s", self.name, cooldown, error)
+        # Classify the failure so callers/health endpoints can distinguish
+        # auth (401) vs forbidden (403) vs rate-limit (429) vs upstream/network.
+        self.last_status = None
+        self.error_kind = "network"
+        text = str(error).lower()
+        # Try to extract an HTTP status code from the message.
+        import re as _re
+
+        m = _re.search(r"\b(401|403|429|5\d{2})\b", text)
+        if m:
+            self.last_status = int(m.group(1))
+        if self.last_status == 401 or "auth" in text or "unauthorized" in text:
+            self.error_kind = "auth"
+            cooldown = max(cooldown, 300.0)
+        elif self.last_status == 403 or "forbidden" in text:
+            self.error_kind = "forbidden"
+            cooldown = max(cooldown, 600.0)
+        elif self.last_status == 429 or "rate" in text or "quota" in text:
+            self.error_kind = "rate_limit"
+            cooldown = max(cooldown, 180.0)
+        elif self.last_status and self.last_status >= 500:
+            self.error_kind = "upstream"
+        self.cooldown_until = time.monotonic() + cooldown
+        log.warning("account %s unhealthy for %.0fs (%s): %s",
+                    self.name, cooldown, self.error_kind, error)
 
     def mark_good(self) -> None:
         self.healthy = True
@@ -143,6 +169,8 @@ class AccountPool:
                 "healthy": account.available(),
                 "uses": account.uses,
                 "last_error": account.last_error,
+                "last_status": account.last_status,
+                "error_kind": account.error_kind,
             }
             for account in self.accounts
         ]
