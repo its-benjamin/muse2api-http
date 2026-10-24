@@ -366,7 +366,7 @@ class TaskStore:
         task_id = "task_" + uuid.uuid4().hex
         task = {
             "id": task_id,
-            "object": "video" if kind == "video" else "task",
+            "object": "video" if kind == "video" else ("image_task" if kind == "image" else "task"),
             "kind": kind,
             "status": "queued",
             "progress": 0,
@@ -1055,15 +1055,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ images
 
     async def _generate_images(prompt: str, n: int, size: str, response_format: str,
-                               model: str, timeout: float) -> dict:
+                               model: str, timeout: float,
+                               reference_image: str | None = None) -> dict:
         aspect = image_size_to_aspect(size)
         instruction = (
             f"Generate {max(1, n)} image(s) with aspect ratio {aspect} for the following request. "
             "Use your image generation tool now, do not ask questions.\n\n" + prompt
         )
+        items = None
+        if reference_image:
+            instruction = (
+                "Edit/transform the attached reference image according to this request. "
+                "Use your image editing tool now, do not ask questions.\n\n" + prompt
+            )
+            item = {"type": "image"}
+            if reference_image.startswith("data:"):
+                item["data_base64"] = reference_image.split(",", 1)[-1]
+                if ";" in reference_image.split(",", 1)[0]:
+                    item["mime_type"] = reference_image.split(":", 1)[1].split(";", 1)[0]
+            else:
+                item["data_base64"] = reference_image
+            items = [item, {"type": "text", "text": instruction}]
         async with app.state.sem:
             result = await app.state.chat.run_with_media(
-                instruction, kind="image", timeout=timeout
+                instruction, kind="image", timeout=timeout, items=items
             )
         images = [ref for ref in result.media if ref.kind == "image"]
         if not images:
@@ -1108,10 +1123,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         n = int(body.get("n") or 1)
         size = str(body.get("size") or "1024x1024")
         response_format = str(body.get("response_format") or "url")
+        reference_image = body.get("reference_image")
         return await _generate_images(
             prompt.strip(), n, size, response_format,
             openai_model(body.get("model"), settings.model),
             float(__import__("os").environ.get("MUSE_IMAGE_TIMEOUT", "240")),
+            reference_image=reference_image if isinstance(reference_image, str) else None,
         )
 
     @app.post("/v1/images/edits")
@@ -1256,6 +1273,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task = app.state.tasks.get(task_id)
         if task is None:
             raise ApiError("video task not found", status=404, code="not_found")
+        return task
+
+    # ------------------------------------------------------------------ async images (idempotent tasks)
+    _image_tasks: dict[str, dict] = {}
+
+    def _image_task_key(request: Request, body: dict) -> str | None:
+        key = request.headers.get("idempotency-key") or body.get("idempotency_key")
+        return str(key).strip() if key else None
+
+    @app.post("/v1/images/tasks")
+    async def create_image_task(request: Request):
+        check_auth(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise ApiError("invalid JSON body")
+        prompt = body.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ApiError("prompt is required")
+        n = int(body.get("n") or 1)
+        size = str(body.get("size") or "1024x1024")
+        response_format = str(body.get("response_format") or "url")
+        model = openai_model(body.get("model"), settings.model)
+        timeout = float(__import__("os").environ.get("MUSE_IMAGE_TIMEOUT", "240"))
+        key = _image_task_key(request, body)
+        if key and key in _image_tasks:
+            return {"id": _image_tasks[key]["id"], "object": "image_task",
+                    "status": _image_tasks[key]["status"], "created_at": _image_tasks[key]["created_at"],
+                    "reused": True}
+        task = app.state.tasks.create("image")
+        _image_tasks[task["id"]] = task
+        if key:
+            _image_tasks[key] = task
+        async def _run():
+            task["status"] = "running"
+            task["progress"] = 5
+            try:
+                reference_image = body.get("reference_image")
+                result = await _generate_images(prompt.strip(), n, size, response_format, model, timeout,
+                                               reference_image=reference_image if isinstance(reference_image, str) else None)
+                task["status"] = "succeeded"
+                task["progress"] = 100
+                task["result"] = result
+            except Exception as exc:  # noqa: BLE001
+                task["status"] = "failed"
+                task["error"] = str(exc)
+        asyncio.create_task(_run())
+        return {"id": task["id"], "object": "image_task", "status": "queued",
+                "created_at": task["created_at"]}
+
+    @app.get("/v1/images/tasks/{task_id}")
+    async def get_image_task(task_id: str, request: Request):
+        check_auth(request)
+        task = app.state.tasks.get(task_id)
+        if task is None or task.get("kind") != "image":
+            raise ApiError("image task not found", status=404, code="not_found")
         return task
 
     # ------------------------------------------------------------------ media
