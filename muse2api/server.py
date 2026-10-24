@@ -359,8 +359,29 @@ def image_size_to_aspect(size: str | None) -> str:
 
 
 class TaskStore:
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path
         self.tasks: dict[str, dict] = {}
+        if path is not None:
+            self._load()
+
+    def _load(self) -> None:
+        try:
+            if self.path and self.path.is_file():
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self.tasks = {k: v for k, v in data.items() if isinstance(v, dict)}
+        except Exception:  # noqa: BLE001
+            self.tasks = {}
+
+    def _save(self) -> None:
+        if self.path is None:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self.tasks), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
 
     def create(self, kind: str) -> dict:
         task_id = "task_" + uuid.uuid4().hex
@@ -376,10 +397,18 @@ class TaskStore:
             "text": "",
         }
         self.tasks[task_id] = task
+        self._save()
         return task
 
     def get(self, task_id: str) -> dict | None:
         return self.tasks.get(task_id)
+
+    def update(self, task_id: str, **fields: Any) -> None:
+        task = self.tasks.get(task_id)
+        if task is None:
+            return
+        task.update(fields)
+        self._save()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -398,7 +427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.http = pool.accounts[0].http
         app.state.chat = ChatService(settings, pool, protocol=protocol)
         app.state.media = media
-        app.state.tasks = TaskStore()
+        app.state.tasks = TaskStore(settings.state_dir / "tasks.json")
         app.state.sem = asyncio.Semaphore(int(__import__("os").environ.get("MUSE2API_CONCURRENCY", "2")))
         app.state.locks = {}
         app.state.started_at = time.time()
@@ -1238,6 +1267,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     __import__("os").environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
                 )
                 save_video_block(app.state.video_block_file, app.state.video_block_until)
+        app.state.tasks._save()
 
     @app.post("/v1/videos")
     async def create_video(request: Request):
@@ -1316,9 +1346,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task["status"] = "succeeded"
                 task["progress"] = 100
                 task["result"] = result
+                app.state.tasks._save()
             except Exception as exc:  # noqa: BLE001
                 task["status"] = "failed"
                 task["error"] = str(exc)
+                app.state.tasks._save()
         asyncio.create_task(_run())
         return {"id": task["id"], "object": "image_task", "status": "queued",
                 "created_at": task["created_at"]}
