@@ -433,7 +433,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.started_at = time.time()
         app.state.last_active_at = time.time()
         app.state.is_sleeping = False
+        app.state.last_renewal_at = None
         keepalive = asyncio.create_task(_keepalive(app))
+        renewal = asyncio.create_task(_renewal(app))
+
 
         try:
             await pool.bootstrap()
@@ -444,8 +447,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             keepalive.cancel()
+            renewal.cancel()
             try:
                 await keepalive
+            except asyncio.CancelledError:
+                pass
+            try:
+                await renewal
             except asyncio.CancelledError:
                 pass
             await pool.close()
@@ -467,6 +475,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.last_active_at = time.time()
             app.state.is_sleeping = False
         return await call_next(request)
+
+    async def _renewal(app: FastAPI) -> None:
+        """Periodic 48h session renewal."""
+        while True:
+            await asyncio.sleep(6 * 3600)
+            try:
+                for account in app.state.pool.accounts:
+                    await account.http.session_info()
+                app.state.last_renewal_at = time.time()
+                log.info("renewal: session cookies refreshed")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("renewal failed: %s", exc)
 
     async def _keepalive(app: FastAPI) -> None:
         last_refresh = time.time()
@@ -1362,6 +1382,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if task is None or task.get("kind") != "image":
             raise ApiError("image task not found", status=404, code="not_found")
         return task
+
+    # ------------------------------------------------------------------ sessions / history
+    @app.get("/healthz")
+    async def healthz():
+        return {"ok": True, "started_at": getattr(app.state, "started_at", None)}
+
+    @app.get("/v1/sessions")
+    async def list_sessions(request: Request):
+
+        check_auth(request)
+        _account, _session, conn = await app.state.pool.connect()
+        try:
+            resp = await conn.request("GET", app.state.chat.protocol.route("sessions.list").path)
+            return resp.json() if hasattr(resp, "json") else {"raw": resp.text()}
+        finally:
+            await conn.close()
+
+    @app.get("/v1/sessions/{session_id}/history")
+    async def session_history(session_id: str, request: Request):
+        check_auth(request)
+        _account, _session, conn = await app.state.pool.connect()
+        try:
+            resp = await conn.request(
+                "GET", app.state.chat.protocol.route("chat.history").path,
+                {"session_id": session_id},
+            )
+            return resp.json() if hasattr(resp, "json") else {"raw": resp.text()}
+        finally:
+            await conn.close()
+
 
     # ------------------------------------------------------------------ media
 
