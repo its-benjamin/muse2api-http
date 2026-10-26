@@ -37,7 +37,7 @@ class Route:
     stream_mode: str | None = None
 
     @classmethod
-    def from_dict(cls, method: str, data: dict) -> "Route":
+    def from_dict(cls, method: str, data: dict) -> Route:
         return cls(
             method=method,
             http_method=str(data.get("httpMethod") or data.get("http_method") or "POST").upper(),
@@ -69,7 +69,7 @@ class ProtocolConfig:
     generated_at: str | None = None
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "ProtocolConfig":
+    def load(cls, path: Path | None = None) -> ProtocolConfig:
         data: dict = {}
         source = "defaults"
         for candidate in (path, CONFIG_PATH, STATE_PATH):

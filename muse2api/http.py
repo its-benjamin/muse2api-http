@@ -10,10 +10,13 @@ import asyncio
 import logging
 import time
 import uuid
-from pathlib import Path
 
 from curl_cffi.requests import AsyncSession
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .gateway import HatchConnection
 from .config import Settings
 from .cookies import CookieError, CookieJar, parse_cookie_file
 from .gateway import GatewaySession
@@ -30,19 +33,25 @@ BROWSER_UA = (
 # Copied from the captured Firefox XHRs. curl_cffi owns TLS/HTTP2,
 # Accept-Encoding, Host and Connection; these are the application headers the
 # web client actually sends.
-BASE_HEADERS = {
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
-    "Origin": BASE,
-    "Referer": BASE + "/",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Dest": "empty",
-    "Priority": "u=4",
-    "Pragma": "no-cache",
-    "Cache-Control": "no-cache",
-    "TE": "trailers",
-}
+def get_base_headers(impersonate: str = "chrome") -> dict[str, str]:
+    headers = {
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
+        "Origin": BASE,
+        "Referer": BASE + "/",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Dest": "empty",
+        "Priority": "u=4",
+        "Pragma": "no-cache",
+        "Cache-Control": "no-cache",
+    }
+    if "firefox" in (impersonate or "").lower():
+        headers["TE"] = "trailers"
+    return headers
+
+
+BASE_HEADERS = get_base_headers("chrome")
 
 
 def _parse_http_version(value: str):
@@ -124,7 +133,7 @@ class MuseHTTP:
         timeout: float | None = None,
         require_ok: bool = True,
     ) -> dict:
-        headers = dict(BASE_HEADERS)
+        headers = get_base_headers(self.settings.impersonate)
         # Let the impersonation profile set the UA unless the operator pins one.
         if self.settings.user_agent:
             headers["User-Agent"] = self.settings.user_agent
@@ -139,7 +148,7 @@ class MuseHTTP:
                 params=params,
                 timeout=timeout or self.settings.request_timeout,
             )
-        except Exception as exc:  # noqa: BLE001 - network layer
+        except Exception as exc:
             raise MuseUpstreamError(f"{method.upper()} {path} failed: {exc}") from exc
         finally:
             self._merge_cookies()
@@ -157,7 +166,7 @@ class MuseHTTP:
             )
         try:
             data = response.json()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise MuseUpstreamError(
                 f"{method.upper()} {path} returned non-JSON: {response.text[:200]!r}"
             ) from exc
@@ -292,13 +301,13 @@ class MuseHTTP:
                 encoding="utf-8",
             )
             (self.settings.state_dir / "cookies.json").write_text(
-                __import__("json").dumps(self.jar.copy(), indent=2),
+                json.dumps(self.jar.copy(), indent=2),
                 encoding="utf-8",
             )
         except Exception:  # pragma: no cover - best effort
             pass
 
-    async def connect(self) -> tuple[GatewaySession, "HatchConnection"]:
+    async def connect(self) -> tuple[GatewaySession, HatchConnection]:
         from .gateway import HatchConnection
 
         session = await self.bootstrap()

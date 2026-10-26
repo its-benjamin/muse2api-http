@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .protocol import DEFAULT_APP_ID, DEFAULT_LB_HOST, DEFAULT_ROUTES, DEFAULT_WS_PATH
@@ -25,7 +25,7 @@ log = logging.getLogger("muse2api.discover")
 
 CHUNK_RE = re.compile(r'(?:/_next/)?static/chunks/[A-Za-z0-9_\-./~]+?\.js')
 MAP_RE = re.compile(r'sourceMappingURL=([A-Za-z0-9_\-./~]+?\.map)')
-ROUTE_METHOD_RE = re.compile(r'method:"([a-z0-9_.\-]+)"', re.I)
+ROUTE_METHOD_RE = re.compile(r'method:"([a-z0-9_.\-]+)"', re.IGNORECASE)
 ROUTE_FIELD_RE = {
     key: re.compile(rf'{key}:"([^"]*)"')
     for key in ("httpMethod", "path", "service", "streamMode")
@@ -86,8 +86,8 @@ def _cache_fresh(path: Path, hours: float) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
         generated = datetime.fromisoformat(str(data.get("generated_at")))
         if generated.tzinfo is None:
-            generated = generated.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - generated).total_seconds() < hours * 3600
+            generated = generated.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - generated).total_seconds() < hours * 3600
     except (OSError, ValueError, TypeError):
         return False
 
@@ -173,7 +173,7 @@ def discover(*, offline: Path | None = None, write: bool = True, force: bool = F
         "ws_path": _extract_constant(corpus, "NOISE_WS_PATH") or DEFAULT_WS_PATH,
         "app_id": _extract_constant(corpus, "HATCH_APP_ID") or DEFAULT_APP_ID,
         "routes": routes,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "source": f"offline:{offline}" if offline is not None else "https://muse.ai bundle",
     }
     if include_maps and not map_sources:

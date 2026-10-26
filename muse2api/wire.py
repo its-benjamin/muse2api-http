@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import os
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Iterator
 
 MAX_NOISE_CHUNK_PAYLOAD = 48 * 1024
 MAX_NOISE_CHUNKS = 256
@@ -153,7 +153,7 @@ class ApplicationResponse:
     end_body: bool = False
 
     @classmethod
-    def decode(cls, data: bytes) -> "ApplicationResponse":
+    def decode(cls, data: bytes) -> ApplicationResponse:
         status = 0
         headers: list[Header] = []
         body = b""
@@ -273,7 +273,7 @@ class NoiseChunk:
         )
 
     @classmethod
-    def decode(cls, data: bytes) -> "NoiseChunk":
+    def decode(cls, data: bytes) -> NoiseChunk:
         chunk_id = 0
         chunk_index = 0
         total_chunks = 1

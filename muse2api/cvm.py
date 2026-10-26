@@ -213,7 +213,7 @@ def run_attestation_verifier(command: str, *, attestation: bytes, server_static_
         "chip_binding": base64.b64encode(chip_binding).decode() if chip_binding else None,
     }
     try:
-        completed = subprocess.run(  # noqa: S603 - operator-supplied command
+        completed = subprocess.run(
             shlex.split(command, posix=os.name != "nt"),
             input=json.dumps(request).encode(),
             capture_output=True,

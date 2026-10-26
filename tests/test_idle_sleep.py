@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
 
 from muse2api.config import Settings
 from muse2api.http import MuseHTTP

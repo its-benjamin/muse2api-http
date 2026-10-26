@@ -21,11 +21,13 @@ import hashlib
 import json
 import logging
 import mimetypes
+import os
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,8 +36,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from .chat import ChatResult, ChatService, session_key
 from .config import Settings
 from .gateway import GatewayError
-from .http import MuseAuthError, MuseHTTP, MuseUpstreamError
-from .media import MediaRef, MediaStore, download_media
+from .http import MuseAuthError, MuseUpstreamError
+from .media import MediaStore, download_media
 from .pool import AccountPool
 from .protocol import ProtocolConfig
 from .tool_bridge import (
@@ -187,7 +189,7 @@ async def reference_image_item(value: Any) -> dict[str, Any] | None:
                 mime = response.headers.get("content-type") or mime
         except ApiError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ApiError(
                 f"could not download reference image: {exc}",
                 status=400, code="invalid_image",
@@ -195,7 +197,7 @@ async def reference_image_item(value: Any) -> dict[str, Any] | None:
     else:
         try:
             data = base64.b64decode(encoded or "", validate=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ApiError("reference image is not valid base64",
                            code="invalid_image") from exc
     if not data:
@@ -379,7 +381,9 @@ class TaskStore:
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self.tasks), encoding="utf-8")
+            temp = self.path.with_suffix(".tmp")
+            temp.write_text(json.dumps(self.tasks, indent=2), encoding="utf-8")
+            temp.replace(self.path)
         except Exception:  # noqa: BLE001
             pass
 
@@ -428,15 +432,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.chat = ChatService(settings, pool, protocol=protocol)
         app.state.media = media
         app.state.tasks = TaskStore(settings.state_dir / "tasks.json")
-        app.state.sem = asyncio.Semaphore(int(__import__("os").environ.get("MUSE2API_CONCURRENCY", "2")))
+        app.state.image_tasks = {}
+        for task in app.state.tasks.tasks.values():
+            if isinstance(task, dict) and task.get("kind") == "image":
+                app.state.image_tasks[task["id"]] = task
+                key = task.get("idempotency_key")
+                if key:
+                    app.state.image_tasks[key] = task
+        app.state.sem = asyncio.Semaphore(int(os.environ.get("MUSE2API_CONCURRENCY", "2")))
         app.state.locks = {}
         app.state.started_at = time.time()
         app.state.last_active_at = time.time()
         app.state.is_sleeping = False
         app.state.last_renewal_at = None
         keepalive = asyncio.create_task(_keepalive(app))
-        renewal = asyncio.create_task(_renewal(app))
-
 
         try:
             await pool.bootstrap()
@@ -447,18 +456,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             keepalive.cancel()
-            renewal.cancel()
-            try:
-                await keepalive
-            except asyncio.CancelledError:
-                pass
-            try:
-                await renewal
-            except asyncio.CancelledError:
-                pass
+            # keepalive task handles both ping and 6h cookie renewal
             await pool.close()
 
     app = FastAPI(title="muse2api-http", version="0.1.0", lifespan=lifespan)
+    now_init = time.time()
+    app.state.started_at = now_init
+    app.state.last_active_at = now_init
+    app.state.is_sleeping = False
+    app.state.last_renewal_at = None
     video_block_file = settings.state_dir / "video_block.json"
     app.state.video_block_file = video_block_file
     app.state.video_block_until = load_video_block(video_block_file)
@@ -476,18 +482,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.is_sleeping = False
         return await call_next(request)
 
-    async def _renewal(app: FastAPI) -> None:
-        """Periodic 48h session renewal."""
-        while True:
-            await asyncio.sleep(6 * 3600)
-            try:
-                for account in app.state.pool.accounts:
-                    await account.http.session_info()
-                app.state.last_renewal_at = time.time()
-                log.info("renewal: session cookies refreshed")
-            except Exception as exc:  # noqa: BLE001
-                log.warning("renewal failed: %s", exc)
-
     async def _keepalive(app: FastAPI) -> None:
         last_refresh = time.time()
         last_cookie_renew = time.time()
@@ -501,6 +495,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 try:
                     for account in app.state.pool.accounts:
                         await account.http.session_info()
+                    app.state.last_renewal_at = now
                     log.info("keepalive: successfully renewed 48h/30d muse.ai session cookies")
                 except Exception as exc:  # noqa: BLE001
                     log.warning("keepalive cookie renewal failed: %s", exc)
@@ -593,19 +588,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz")
     async def healthz():
-        pool: AccountPool = app.state.pool
-        primary = app.state.http
+        pool: AccountPool | None = getattr(app.state, "pool", None)
+        primary = getattr(app.state, "http", None)
         now = time.time()
-        idle_s = int(now - getattr(app.state, "last_active_at", app.state.started_at))
+        started = getattr(app.state, "started_at", now)
+        last_active = getattr(app.state, "last_active_at", started)
+        idle_s = int(now - last_active)
         is_sleeping = getattr(app.state, "is_sleeping", False)
         return {
-            "ok": primary._cached_session is not None,
+            "ok": bool(primary and primary._cached_session is not None),
             "mode": settings.session_mode,
-            "vm_id": primary._cached_session.vm_id if primary._cached_session else None,
-            "accounts": pool.status(),
-            "uptime_s": int(now - app.state.started_at),
+            "vm_id": primary._cached_session.vm_id if (primary and primary._cached_session) else None,
+            "accounts": pool.status() if pool else [],
+            "uptime_s": int(now - started),
             "idle_s": idle_s,
             "sleeping": is_sleeping,
+            "started_at": started,
+            "last_renewal_at": getattr(app.state, "last_renewal_at", None),
         }
 
     @app.get("/v1/models")
@@ -1176,7 +1175,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await _generate_images(
             prompt.strip(), n, size, response_format,
             openai_model(body.get("model"), settings.model),
-            float(__import__("os").environ.get("MUSE_IMAGE_TIMEOUT", "240")),
+            float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240")),
             reference_image=reference_image if isinstance(reference_image, str) else None,
         )
 
@@ -1205,12 +1204,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Edit the attached image according to this request. Use your image editing tool now, "
             "do not ask questions.\n\n" + prompt.strip()
         )
-        state = app.state.chat.sessions.get(f"media:edit:{uuid.uuid4()}")
         async with app.state.sem:
             result = await app.state.chat.run_with_media(
                 instruction,
                 kind="image",
-                timeout=float(__import__("os").environ.get("MUSE_IMAGE_TIMEOUT", "240")),
+                timeout=float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240")),
                 items=[item, {"type": "text", "text": instruction}],
             )
         images = [ref for ref in result.media if ref.kind == "image"]
@@ -1250,7 +1248,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with app.state.sem:
                 result = await app.state.chat.run_with_media(
                     instruction, kind="video",
-                    timeout=float(__import__("os").environ.get("MUSE_VIDEO_TIMEOUT", "600")),
+                    timeout=float(os.environ.get("MUSE_VIDEO_TIMEOUT", "600")),
                     items=([*items, {"type": "text", "text": instruction}] if items else None),
                     refusal_markers=_VIDEO_REFUSAL_MARKERS,
                 )
@@ -1263,7 +1261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task.update(video_failure(code, result.text))
                 if code == "video_unavailable_region":
                     app.state.video_block_until = time.time() + float(
-                        __import__("os").environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
+                        os.environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
                     )
                     save_video_block(app.state.video_block_file, app.state.video_block_until)
                 return
@@ -1284,7 +1282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             task.update(video_failure(code, str(exc)))
             if code == "video_unavailable_region":
                 app.state.video_block_until = time.time() + float(
-                    __import__("os").environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
+                    os.environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
                 )
                 save_video_block(app.state.video_block_file, app.state.video_block_until)
         app.state.tasks._save()
@@ -1326,8 +1324,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return task
 
     # ------------------------------------------------------------------ async images (idempotent tasks)
-    _image_tasks: dict[str, dict] = {}
-
     def _image_task_key(request: Request, body: dict) -> str | None:
         key = request.headers.get("idempotency-key") or body.get("idempotency_key")
         return str(key).strip() if key else None
@@ -1346,16 +1342,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         size = str(body.get("size") or "1024x1024")
         response_format = str(body.get("response_format") or "url")
         model = openai_model(body.get("model"), settings.model)
-        timeout = float(__import__("os").environ.get("MUSE_IMAGE_TIMEOUT", "240"))
+        timeout = float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240"))
         key = _image_task_key(request, body)
-        if key and key in _image_tasks:
-            return {"id": _image_tasks[key]["id"], "object": "image_task",
-                    "status": _image_tasks[key]["status"], "created_at": _image_tasks[key]["created_at"],
+        if key and key in app.state.image_tasks:
+            reused = app.state.image_tasks[key]
+            return {"id": reused["id"], "object": "image_task",
+                    "status": reused["status"], "created_at": reused["created_at"],
                     "reused": True}
         task = app.state.tasks.create("image")
-        _image_tasks[task["id"]] = task
         if key:
-            _image_tasks[key] = task
+            task["idempotency_key"] = key
+        app.state.image_tasks[task["id"]] = task
+        if key:
+            app.state.image_tasks[key] = task
+        app.state.tasks._save()
         async def _run():
             task["status"] = "running"
             task["progress"] = 5
@@ -1384,9 +1384,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return task
 
     # ------------------------------------------------------------------ sessions / history
-    @app.get("/healthz")
-    async def healthz():
-        return {"ok": True, "started_at": getattr(app.state, "started_at", None)}
 
     @app.get("/v1/sessions")
     async def list_sessions(request: Request):

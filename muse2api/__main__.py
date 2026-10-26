@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import sys
 
 from .chat import ChatService, session_key
 from .config import Settings
-from .http import MuseHTTP
 from .pool import AccountPool
 from .protocol import ProtocolConfig
 
@@ -92,7 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chat":
         return asyncio.run(_chat(settings, args.prompt, args.session))
     if args.command == "discover":
-        from .discover import discover as run_discover, summarize
+        from .discover import discover as run_discover
+        from .discover import summarize
 
         print(summarize(run_discover(
             offline=args.offline,
@@ -105,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         import uvicorn
+
         from .server import create_app
 
         if args.host:

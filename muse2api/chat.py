@@ -16,14 +16,15 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from .approvals import POLICIES as APPROVAL_POLICIES, handle_pending
+from .approvals import POLICIES as APPROVAL_POLICIES
+from .approvals import handle_pending
 from .config import Settings
 from .gateway import GatewayError, HatchConnection
-from .http import MuseHTTP
 from .media import MediaRef, extract_media
 from .pool import AccountPool
 from .protocol import ProtocolConfig
@@ -285,7 +286,7 @@ class ChatService:
                 raw_id = ack.get("message_id") or ack.get("id")
                 if isinstance(raw_id, str):
                     message_id = raw_id
-            except (asyncio.TimeoutError, GatewayError) as exc:
+            except (TimeoutError, GatewayError) as exc:
                 log.debug("chat.stream ack unavailable (%s); falling back to history search", exc)
 
             reply, reply_id, events, media = await self._poll_thread_reply(
@@ -359,7 +360,7 @@ class ChatService:
                     timeout=min(20.0, max(5.0, deadline - time.monotonic())),
                 )
                 data = response.json() or {}
-            except (GatewayError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, GatewayError) as exc:
                 log.debug("history poll failed: %s", exc)
                 await asyncio.sleep(1.0)
                 continue
@@ -534,7 +535,7 @@ class ChatService:
                     break
                 try:
                     event = await asyncio.wait_for(queue.get(), min(5.0, remaining))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 if not isinstance(event, dict):
                     continue

@@ -16,44 +16,45 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 MARKER = "<<TOOL_CALL>>"
 RESULT_MARKER = "<<TOOL_RESULT>>"
 FENCE_OPEN = "```tool_call"
 FENCE_CLOSE = "```"
 
-_MARKER_RE = re.compile(r"<<TOOL_CALL>>\s*(\{.*?\})\s*<<TOOL_CALL>>", re.S)
-_TOOL_TAG_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S | re.I)
+_MARKER_RE = re.compile(r"<<TOOL_CALL>>\s*(\{.*?\})\s*<<TOOL_CALL>>", re.DOTALL)
+_TOOL_TAG_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL | re.IGNORECASE)
 _XML_TOOL_RE = re.compile(
-    r"<tool_use\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</tool_use>", re.S | re.I
+    r"<tool_use\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</tool_use>", re.DOTALL | re.IGNORECASE
 )
 _OPENCODE_TOOL_RE = re.compile(
     r"(?:^|\n)\s*(?:assistant\s+)?to\s*=\s*([A-Za-z_][\w.-]*)\s*(\{.*?\})\s*(?:\n|$)",
-    re.S,
+    re.DOTALL,
 )
 _FENCED_TOOL_RE = re.compile(
     r"```(?:json|tool_call|tool)?\s*(\{[^{}]*?\"(?:tool_)?(?:name|tool|call)\".*?\})\s*```",
-    re.S | re.I,
+    re.DOTALL | re.IGNORECASE,
 )
-_MISTRAL_TOOL_RE = re.compile(r"\[TOOL_CALLS\]\s*(\[.*?\])", re.S)
+_MISTRAL_TOOL_RE = re.compile(r"\[TOOL_CALLS\]\s*(\[.*?\])", re.DOTALL)
 _INVOKE_XML_RE = re.compile(
-    r"<invoke\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</invoke>", re.S | re.I
+    r"<invoke\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</invoke>", re.DOTALL | re.IGNORECASE
 )
 _ANTML_INVOKE_RE = re.compile(
     r"<antml:invoke\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</antml:invoke>",
-    re.S | re.I,
+    re.DOTALL | re.IGNORECASE,
 )
 _INVOKE_PARAM_RE = re.compile(
-    r"<parameter\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</parameter>", re.S | re.I
+    r"<parameter\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</parameter>", re.DOTALL | re.IGNORECASE
 )
 _FUNCTION_TAG_RE = re.compile(
-    r"<function\s*=\s*[\"']?([A-Za-z_][\w.-]*)[\"']?\s*>(.*?)</function>", re.S | re.I
+    r"<function\s*=\s*[\"']?([A-Za-z_][\w.-]*)[\"']?\s*>(.*?)</function>", re.DOTALL | re.IGNORECASE
 )
 _BARE_OBJECT_RE = re.compile(
-    r"(?:^|\n)\s*(\{\s*\"function\"\s*:\s*\"[^\"]+\".*?\})\s*(?:\n|$)", re.S
+    r"(?:^|\n)\s*(\{\s*\"function\"\s*:\s*\"[^\"]+\".*?\})\s*(?:\n|$)", re.DOTALL
 )
-_BARE_ARRAY_RE = re.compile(r"\"tool_calls\"\s*:\s*\[(.*?)\]\s*(?=,\s*\"|\}|\n|$)", re.S)
+_BARE_ARRAY_RE = re.compile(r"\"tool_calls\"\s*:\s*\[(.*?)\]\s*(?=,\s*\"|\}|\n|$)", re.DOTALL)
 
 _id_counter = 0
 

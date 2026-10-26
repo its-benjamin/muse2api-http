@@ -47,7 +47,7 @@ class Settings:
     user_agent: str | None = None
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         state_dir = Path(os.environ.get("MUSE_STATE_DIR", ".muse-state"))
         return cls(
             host=os.environ.get("MUSE2API_HOST", "127.0.0.1"),

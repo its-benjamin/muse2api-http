@@ -48,8 +48,7 @@ class MediaRef:
 
 def _normalize_path(value: str) -> str:
     text = value.strip()
-    if text.startswith("sandbox://"):
-        text = text[len("sandbox://"):]
+    text = text.removeprefix("sandbox://")
     text = text.replace("\\", "/")
     while "//" in text:
         text = text.replace("//", "/")
@@ -156,7 +155,7 @@ class MediaStore:
         return f"{self.public_base}/{name}"
 
 
-async def download_media(conn: HatchConnection, ref: MediaRef) -> bytes:
+async def download_media(conn: HatchConnection, ref: MediaRef, *, impersonate: str = "chrome") -> bytes:
     paths: list[str] = []
     if ref.path:
         clean = _normalize_path(ref.path)
@@ -175,9 +174,14 @@ async def download_media(conn: HatchConnection, ref: MediaRef) -> bytes:
     # Signed VM URLs are not publicly reachable, but an external URL may be.
     if ref.url and ref.url.startswith(("http://", "https://")):
         try:
+            from curl_cffi import CurlFollow
             from curl_cffi.requests import AsyncSession
 
-            async with AsyncSession(impersonate="chrome", timeout=120) as client:
+            async with AsyncSession(
+                impersonate=impersonate,
+                timeout=120,
+                allow_redirects=CurlFollow.SAFE,
+            ) as client:
                 response = await client.get(ref.url)
                 if 200 <= response.status_code < 300 and response.content:
                     return response.content

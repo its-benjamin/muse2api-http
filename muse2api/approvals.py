@@ -12,7 +12,8 @@ Account-wide permission settings are never modified.
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from .gateway import HatchConnection
 

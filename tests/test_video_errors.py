@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import time
 
-from muse2api.server import classify_video_error, load_video_block, save_video_block, video_failure
+from muse2api.server import (
+    classify_video_error,
+    load_video_block,
+    save_video_block,
+    video_failure,
+)
 
 
 def test_region_restriction():

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-import math
+import uuid
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,8 +13,7 @@ UPLOAD_CHUNK_SIZE = 524_288
 def normalize_gateway_path(value: str) -> str:
     text = value.strip()
     text = text.split("?", 1)[0].split("#", 1)[0]
-    if text.startswith("file://"):
-        text = text[7:]
+    text = text.removeprefix("file://")
     text = text.replace("\\", "/")
     while "//" in text:
         text = text.replace("//", "/")
@@ -83,7 +82,7 @@ class MuseFilesystem:
         source = Path(local_path)
         size = source.stat().st_size
         destination = normalize_gateway_path(remote_path)
-        temp = destination + f".upload-{__import__('uuid').uuid4().hex}.part"
+        temp = destination + f".upload-{uuid.uuid4().hex}.part"
         staged = stage_before_publish
         target = temp if staged else destination
         try:

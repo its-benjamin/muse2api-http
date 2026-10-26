@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .config import Settings
 from .cookies import parse_cookie_file
-from .gateway import HatchConnection, GatewaySession
+from .gateway import GatewaySession, HatchConnection
 from .http import MuseHTTP
 from .protocol import ProtocolConfig
 
@@ -106,7 +106,6 @@ class AccountPool:
 
     def _next(self) -> Account:
         count = len(self.accounts)
-        now = time.monotonic()
         for offset in range(count):
             account = self.accounts[(self._index + offset) % count]
             if account.available():
@@ -133,6 +132,7 @@ class AccountPool:
                     attestation_cmd=self.settings.attestation_cmd,
                     ws_client=account.http.client,
                     impersonate=self.settings.impersonate,
+                    user_agent=self.settings.user_agent,
                 )
                 account.mark_good()
                 return account, session, conn

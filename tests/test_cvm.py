@@ -15,7 +15,6 @@ from muse2api.cvm import (
     STATE_UNPROVISIONED,
     CvmError,
     build_message3,
-    create_client_proof,
     create_vm_proof,
     decode_challenge,
     parse_rv_key,

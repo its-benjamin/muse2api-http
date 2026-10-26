@@ -7,18 +7,26 @@ single encrypted WebSocket, exactly like the web client.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlencode
 
 from websockets.asyncio.client import connect as ws_connect
 
-from .cvm import build_message3, decode_challenge, parse_rv_key, run_attestation_verifier
+from .cvm import (
+    build_message3,
+    decode_challenge,
+    parse_rv_key,
+    run_attestation_verifier,
+)
 from .noise import EMPTY_AD, NoiseXXInitiator, make_message1_payload
 from .wire import (
+    SERVICES,
     ApplicationRequest,
     ApplicationResponse,
     Header,
@@ -28,27 +36,41 @@ from .wire import (
     encode_service_frame_request,
     encode_service_request,
     split_noise_payload,
-    SERVICES,
 )
 
 log = logging.getLogger("muse2api.gateway")
 
-BROWSER_UA = (
+CHROME_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
+FIREFOX_BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) "
     "Gecko/20100101 Firefox/158.0"
 )
-# Exact header set Firefox uses for the gateway upgrade (captured HAR).
-WS_HEADERS = {
-    "Origin": "https://muse.ai",
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "websocket",
-    "Sec-Fetch-Site": "cross-site",
-    "Sec-Fetch-Storage-Access": "none",
-    "Pragma": "no-cache",
-    "Cache-Control": "no-cache",
-}
+BROWSER_UA = CHROME_BROWSER_UA
+
+
+def get_ws_headers(impersonate: str = "chrome") -> dict[str, str]:
+    """Headers for the gateway WebSocket upgrade matching the browser profile."""
+    headers = {
+        "Origin": "https://muse.ai",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9,en-GB;q=0.8",
+        "Sec-Fetch-Mode": "websocket",
+        "Sec-Fetch-Site": "cross-site",
+        "Pragma": "no-cache",
+        "Cache-Control": "no-cache",
+    }
+    if "firefox" in (impersonate or "").lower():
+        headers["Sec-Fetch-Dest"] = "empty"
+        headers["Sec-Fetch-Storage-Access"] = "none"
+    else:
+        headers["Sec-Fetch-Dest"] = "websocket"
+    return headers
+
+
+WS_HEADERS = get_ws_headers("chrome")
 
 
 class GatewayError(RuntimeError):
@@ -100,7 +122,7 @@ class RpcResponse:
     def text(self) -> str:
         return self.body.decode("utf-8", "replace")
 
-    def raise_for_status(self) -> "RpcResponse":
+    def raise_for_status(self) -> RpcResponse:
         if self.status >= 400:
             raise RpcError(
                 f"hatch RPC HTTP {self.status}: {self.text()[:500]}",
@@ -121,6 +143,7 @@ class _Stream:
         self.body = bytearray()
         self.responded = False
         self._buffer = ""
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._done = False
 
     def feed(self, frame) -> None:
@@ -149,11 +172,9 @@ class _Stream:
             pass
 
     def _parse(self, data: bytes) -> None:
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
+        text = self._decoder.decode(data)
+        if not text:
             return
-        self._buffer += text
         while "\n" in self._buffer:
             line, _, self._buffer = self._buffer.partition("\n")
             line = line.strip()
@@ -213,7 +234,8 @@ class HatchConnection:
         attestation_cmd: str | None = None,
         ws_client=None,
         impersonate: str = "chrome",
-    ) -> "HatchConnection":
+        user_agent: str | None = None,
+    ) -> HatchConnection:
         url = session.websocket_url(lb_host=lb_host, path=ws_path)
         log.debug("connecting %s", url.split("?")[0])
         ws = None
@@ -226,9 +248,12 @@ class HatchConnection:
         try:
             from curl_cffi import WebSocketRetryStrategy
 
+            ws_headers = get_ws_headers(impersonate)
+            if user_agent:
+                ws_headers["User-Agent"] = user_agent
             ws = await ws_client.ws_connect(
                 url,
-                headers=WS_HEADERS,
+                headers=ws_headers,
                 timeout=timeout,
                 impersonate=impersonate,
                 max_message_size=16 * 1024 * 1024,
@@ -237,12 +262,16 @@ class HatchConnection:
             log.debug("websocket via curl_cffi (%s fingerprint)", impersonate)
         except Exception as exc:  # noqa: BLE001 - keep a stdlib TLS fallback
             log.warning("curl_cffi websocket failed (%s); using websockets", exc)
+            fallback_ua = user_agent or (
+                FIREFOX_BROWSER_UA if "firefox" in (impersonate or "").lower() else CHROME_BROWSER_UA
+            )
+            ws_headers = get_ws_headers(impersonate)
             ws = await ws_connect(
                 url,
-                origin=WS_HEADERS["Origin"],
-                user_agent_header=BROWSER_UA,
+                origin=ws_headers["Origin"],
+                user_agent_header=fallback_ua,
                 additional_headers={
-                    key: value for key, value in WS_HEADERS.items()
+                    key: value for key, value in ws_headers.items()
                     if key not in ("Origin", "User-Agent")
                 },
                 max_size=None,
@@ -254,53 +283,67 @@ class HatchConnection:
             # The connection owns the dedicated session only when the caller
             # did not supply a shared one; keep a reference for cleanup.
             log.debug("websocket uses a dedicated curl_cffi session")
-        noise = NoiseXXInitiator()
-        await noise.initialize()
-        client_nonce, payload1 = make_message1_payload()
-        await ws.send(noise.write_message1(payload1))
-        message1_hash = noise.handshake_hash
-        message2 = await asyncio.wait_for(ws.recv(), timeout)
-        if isinstance(message2, tuple):  # curl_cffi returns (payload, flags)
-            message2 = message2[0]
-        if not isinstance(message2, (bytes, bytearray)):
-            await ws.close()
-            raise GatewayError("expected binary Noise handshake message 2")
-        payload2 = noise.read_message2(bytes(message2))
-        message3_payload = b""
-        challenge = decode_challenge(payload2) if payload2 else None
-        if payload2 and challenge is None:
-            # Standard VMs send an attestation blob here, not an RV challenge.
-            log.debug("standard message 2 payload (%d bytes)", len(payload2))
-        if challenge is not None:
-            if not cvm_rv_key:
+        try:
+            noise = NoiseXXInitiator()
+            await noise.initialize()
+            client_nonce, payload1 = make_message1_payload()
+            await ws.send(noise.write_message1(payload1))
+            message1_hash = noise.handshake_hash
+            message2 = await asyncio.wait_for(ws.recv(), timeout)
+            if isinstance(message2, tuple):  # curl_cffi returns (payload, flags)
+                message2 = message2[0]
+            if not isinstance(message2, (bytes, bytearray)):
                 await ws.close()
-                raise GatewayError(
-                    "confidential VM challenge received but MUSE_CVM_RV_KEY is not set; "
-                    "refusing to downgrade the handshake"
+                raise GatewayError("expected binary Noise handshake message 2")
+            payload2 = noise.read_message2(bytes(message2))
+            message3_payload = b""
+            challenge = decode_challenge(payload2) if payload2 else None
+            if payload2 and challenge is None:
+                # Standard VMs send an attestation blob here, not an RV challenge.
+                log.debug("standard message 2 payload (%d bytes)", len(payload2))
+            if challenge is not None:
+                if not cvm_rv_key:
+                    await ws.close()
+                    raise GatewayError(
+                        "confidential VM challenge received but MUSE_CVM_RV_KEY is not set; "
+                        "refusing to downgrade the handshake"
+                    )
+                message2_hash = noise.handshake_hash
+                verdict = run_attestation_verifier(
+                    attestation_cmd or "",
+                    attestation=challenge.attestation,
+                    server_static_key=noise.remote_static_public_key or b"",
+                    handshake_hash=message2_hash,
+                    client_nonce=client_nonce,
+                    chip_binding=challenge.chip_binding,
                 )
-            message2_hash = noise.handshake_hash
-            verdict = run_attestation_verifier(
-                attestation_cmd or "",
-                attestation=challenge.attestation,
-                server_static_key=noise.remote_static_public_key or b"",
-                handshake_hash=message2_hash,
-                client_nonce=client_nonce,
-                chip_binding=challenge.chip_binding,
-            )
-            message3_payload = build_message3(
-                challenge,
-                parse_rv_key(cvm_rv_key),
-                session.notary_token or "",
-                message1_hash,
-                message2_hash,
-                client_nonce,
-                verdict,
-            )
-        await ws.send(noise.write_message3(message3_payload))
-        tx, rx = noise.split()
-        log.debug("noise handshake complete")
-        conn = cls(ws, tx, rx, locale=locale)
-        conn._ws_client = own_client
+                message3_payload = build_message3(
+                    challenge,
+                    parse_rv_key(cvm_rv_key),
+                    session.notary_token or "",
+                    message1_hash,
+                    message2_hash,
+                    client_nonce,
+                    verdict,
+                )
+            await ws.send(noise.write_message3(message3_payload))
+            tx, rx = noise.split()
+            log.debug("noise handshake complete")
+            conn = cls(ws, tx, rx, locale=locale)
+            conn._ws_client = own_client
+            return conn
+        except BaseException:
+            if ws is not None:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+            if own_client is not None:
+                try:
+                    await own_client.close()
+                except Exception:
+                    pass
+            raise
         return conn
 
     # -- receive -----------------------------------------------------------
@@ -422,6 +465,8 @@ class HatchConnection:
                         raise GatewayError(item[1])
                     return RpcResponse(stream.status, stream.headers, bytes(stream.body))
         finally:
+            if not stream._done:
+                await self._send_reset(stream.id, "cancelled")
             self._drop_stream(stream.id)
 
     async def send(
@@ -474,7 +519,7 @@ class HatchConnection:
                     wait = min(wait, remaining)
                 try:
                     item = await asyncio.wait_for(stream.queue.get(), wait)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if deadline is not None and loop.time() >= deadline:
                         return
                     continue
