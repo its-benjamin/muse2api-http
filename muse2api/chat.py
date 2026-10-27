@@ -211,6 +211,12 @@ class ChatService:
                 "unknown approval policy %r; permission prompts stay unhandled",
                 settings.approval_policy,
             )
+        self.approval_ask = (
+            settings.approval_ask if settings.approval_ask in APPROVAL_POLICIES
+            else "allow_once"
+        )
+        if self.approval_ask in {"off", "settings"}:
+            self.approval_ask = "allow_once"
 
     async def run(
         self,
@@ -341,7 +347,9 @@ class ChatService:
             """Answer prompts before declaring the turn finished."""
             if self.approval_policy == "off":
                 return False
-            handled = await handle_pending(conn, session_id, self.approval_policy)
+            handled = await handle_pending(
+                conn, session_id, self.approval_policy, ask_policy=self.approval_ask
+            )
             if handled:
                 log.info("answered %d permission prompt(s) for %s", handled, session_id)
             return handled > 0
@@ -350,7 +358,9 @@ class ChatService:
             polls += 1
             if self.approval_policy != "off" and time.monotonic() >= next_approval_check:
                 next_approval_check = time.monotonic() + 4.0
-                handled = await handle_pending(conn, session_id, self.approval_policy)
+                handled = await handle_pending(
+                    conn, session_id, self.approval_policy, ask_policy=self.approval_ask
+                )
                 if handled:
                     log.info("answered %d permission prompt(s) for %s", handled, session_id)
             try:

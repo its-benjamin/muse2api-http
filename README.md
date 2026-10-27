@@ -138,20 +138,33 @@ that triggers one would wait until `MUSE_CHAT_TIMEOUT`. Set an explicit policy
 to answer prompts that are scoped to the waiting thread:
 
 ```bash
-MUSE2API_APPROVAL_POLICY=allow_once   # off | allow_once | allow_session | deny
+MUSE2API_APPROVAL_POLICY=settings   # off | allow_once | allow_session | allow_always | settings | deny
+MUSE2API_APPROVAL_ASK=allow_once    # answer used when the account setting is "ask"
 ```
 
 - `off` (default): never answer; the upstream turn may time out.
-- `allow_once`: approve the weakest one-shot option the server offers.
+- `allow_once`: approve the weakest one-shot option the server offers
+  (`allow_once`, `allow_today`, `allow_for_this_task`, ...).
 - `allow_session`: prefer a session grant, falling back to one-shot.
+- `allow_always`: prefer the daemon's durable grant (`allow_always`, or a
+  scoped grant with its `allow_always_scope`), so the same destination/entity
+  stops prompting; falls back to session, then one-shot.
+- `settings`: read the account's own permission settings (`/permissions/settings`
+  and `/permissions/active`) and follow them. `allow` (including the
+  `auto_allow` defaults and connector/action overrides) becomes a session
+  grant; `deny`/`off` becomes a refusal; a resolved `ask` cannot reach a human
+  here, so `MUSE2API_APPROVAL_ASK` answers it instead (`allow_once` by default).
+  Settings are read per connection and cached for 60 s.
 - `deny`: refuse, letting the assistant report the refusal.
 
 Only approvals whose `scope.thread_id` (or `scope.session_scope_id`) matches the
 current chat are touched (thread mode, the default). Account-wide HITL
 settings, connector OAuth consent, and the `/api/consent/status` web flow are
-**not** modified; connector setup still requires the browser. Auto-approval is
-security-sensitive: enable it only for an account whose data and network access
-you are willing to expose to the model.
+read by `settings` but never modified; connector setup still requires the
+browser. `allow_always` does create upstream durable grants for the scopes the
+daemon offers (destination, domain, connector, recipient), which survive
+restarts. Auto-approval is security-sensitive: enable it only for an account
+whose data and network access you are willing to expose to the model.
 
 ## Media URLs
 
@@ -277,7 +290,8 @@ random headers:
 | `MUSE_REQUEST_TIMEOUT` | `60` | Per-request upstream HTTP timeout |
 | `MUSE_LISTEN_MS` | `90000` | Gateway listen window, milliseconds |
 | `MUSE_IDLE_SLEEP_SECONDS` | `1800` | Pause keepalive and release sessions after this much inactivity (`0` disables) |
-| `MUSE2API_APPROVAL_POLICY` | `off` | `off`, `allow_once`, `allow_session`, or `deny` agent permission prompts |
+| `MUSE2API_APPROVAL_POLICY` | `off` | `off`, `allow_once`, `allow_session`, `allow_always`, `settings`, or `deny` agent permission prompts |
+| `MUSE2API_APPROVAL_ASK` | `allow_once` | Answer used by `settings` when the account resolves a prompt to `ask` |
 | `MUSE2API_PUBLIC_BASE` | unset | Absolute prefix for generated media URLs |
 | `MUSE2API_ALLOW_PRIVATE_URLS` | unset | Allow reference-image URLs that resolve to private/loopback hosts (SSRF guard opt-out) |
 | `MUSE_VIDEO_BLOCK_SECONDS` | `21600` | Suppress new video tasks after a region refusal |

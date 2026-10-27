@@ -26,7 +26,12 @@ import struct
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-MAX_NOISE_CHUNK_PAYLOAD = 48 * 1024
+# Outgoing payloads are split at 48 KiB, but the gateway itself sends large
+# messages (approval snapshots with presentation/traces, permission listings)
+# as single chunks. Rejecting those dropped the frames and stalled turns, so
+# the inbound ceiling is deliberately generous while the assembly cap (below)
+# still bounds memory.
+MAX_NOISE_CHUNK_PAYLOAD = 4 * 1024 * 1024
 MAX_NOISE_CHUNKS = 256
 MAX_ASSEMBLY_BYTES = 16 * 1024 * 1024
 
@@ -323,6 +328,7 @@ class NoiseReassembler:
         if chunk.chunk_index < 0 or chunk.chunk_index >= chunk.total_chunks:
             raise ValueError("invalid chunk_index")
         if len(chunk.payload) > MAX_NOISE_CHUNK_PAYLOAD:
+            self._pending.pop(chunk.chunk_id, None)
             raise ValueError("noise frame payload too large")
         total, parts, size = self._pending.get(
             chunk.chunk_id, (chunk.total_chunks, {}, 0)

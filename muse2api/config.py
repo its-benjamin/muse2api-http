@@ -37,8 +37,12 @@ class Settings:
     cache_session_seconds: float = 45.0
     log_level: str = "info"
     # Opt-in: answer agent permission prompts for the waiting chat thread.
-    # off | allow_once | allow_session | deny  (account-wide settings untouched)
+    # off | allow_once | allow_session | allow_always | settings | deny
+    # (account-wide settings are read by "settings", never modified)
     approval_policy: str = "off"
+    # Answer used when the account settings resolve a prompt to "ask": no human
+    # is attached to an HTTP turn, so the fallback is answered automatically.
+    approval_ask: str = "allow_once"
     # Idle auto-sleep: seconds of inactivity before pausing keepalive
     # and releasing idle network sessions (0 to disable, default 1800 = 30m)
     idle_sleep_seconds: float = 1800.0
@@ -78,6 +82,7 @@ class Settings:
             cache_session_seconds=float(os.environ.get("MUSE_SESSION_CACHE", "45")),
             log_level=os.environ.get("MUSE_LOG_LEVEL", os.environ.get("LOG_LEVEL", "info")),
             approval_policy=os.environ.get("MUSE2API_APPROVAL_POLICY", "off").strip().lower(),
+            approval_ask=os.environ.get("MUSE2API_APPROVAL_ASK", "allow_once").strip().lower(),
             idle_sleep_seconds=float(os.environ.get("MUSE_IDLE_SLEEP_SECONDS", "1800")),
             public_base=os.environ.get("MUSE2API_PUBLIC_BASE") or None,
             cvm_rv_key=os.environ.get("MUSE_CVM_RV_KEY") or None,
