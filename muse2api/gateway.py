@@ -18,7 +18,6 @@ from urllib.parse import urlencode
 
 from websockets.asyncio.client import connect as ws_connect
 
-from .config import proxy_map
 from .cvm import (
     build_message3,
     decode_challenge,
@@ -251,11 +250,10 @@ class HatchConnection:
         if ws_client is None:
             from curl_cffi import AsyncSession
 
-            proxies = proxy_map(proxy)
             own_client = AsyncSession(
                 impersonate=impersonate,
                 max_clients=2,
-                **({"proxies": proxies} if proxies else {}),
+                **({"proxy": proxy} if proxy else {}),
             )
             ws_client = own_client
         try:
@@ -271,6 +269,7 @@ class HatchConnection:
                 impersonate=impersonate,
                 max_message_size=16 * 1024 * 1024,
                 ws_retry=WebSocketRetryStrategy(retry=True, count=3),
+                **({"proxy": proxy} if proxy else {}),
             )
             log.debug("websocket via curl_cffi (%s fingerprint)", impersonate)
         except Exception as exc:  # noqa: BLE001 - stdlib fallback is opt-in
@@ -309,6 +308,8 @@ class HatchConnection:
             await noise.initialize()
             client_nonce, payload1 = make_message1_payload()
             await ws.send(noise.write_message1(payload1))
+            if hasattr(ws, "flush"):
+                await ws.flush()
             message1_hash = noise.handshake_hash
             message2 = await asyncio.wait_for(ws.recv(), timeout)
             if isinstance(message2, tuple):  # curl_cffi returns (payload, flags)
@@ -348,6 +349,8 @@ class HatchConnection:
                     verdict,
                 )
             await ws.send(noise.write_message3(message3_payload))
+            if hasattr(ws, "flush"):
+                await ws.flush()
             tx, rx = noise.split()
             log.debug("noise handshake complete")
             conn = cls(ws, tx, rx, locale=locale)
@@ -421,6 +424,8 @@ class HatchConnection:
                 raise GatewayClosed(f"gateway closed: {self._fatal!r}")
             for frame in split_noise_payload(envelope):
                 await self.ws.send(self.tx.encrypt_with_ad(EMPTY_AD, frame))
+            if hasattr(self.ws, "flush"):
+                await self.ws.flush()
 
     def _new_stream(self) -> _Stream:
         stream_id = self._next_stream_id
@@ -445,6 +450,8 @@ class HatchConnection:
             async with self._send_lock:
                 for frame in split_noise_payload(envelope):
                     await self.ws.send(self.tx.encrypt_with_ad(EMPTY_AD, frame))
+                if hasattr(self.ws, "flush"):
+                    await self.ws.flush()
         except Exception:  # pragma: no cover - best effort
             pass
 

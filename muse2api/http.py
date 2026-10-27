@@ -19,7 +19,7 @@ from curl_cffi.requests import AsyncSession
 
 if TYPE_CHECKING:
     from .gateway import HatchConnection
-from .config import Settings, proxy_map
+from .config import Settings
 from .cookies import CookieError, CookieJar, parse_cookie_file
 from .gateway import GatewaySession
 
@@ -177,7 +177,6 @@ class MuseHTTP:
         return True
 
     def _create_client(self) -> AsyncSession:
-        proxies = proxy_map(self.settings.proxy)
         return AsyncSession(
             impersonate=self.settings.impersonate,
             timeout=self.settings.request_timeout,
@@ -185,7 +184,7 @@ class MuseHTTP:
             max_clients=50,
             retry=2,
             cookies=self.jar.copy(),
-            **({"proxies": proxies} if proxies else {}),
+            **({"proxy": self.settings.proxy} if self.settings.proxy else {}),
         )
 
     @property

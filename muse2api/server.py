@@ -616,6 +616,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         except Exception as exc:  # noqa: BLE001
                             log.debug("error closing idle pool: %s", exc)
                     continue
+            # Keep HTTP/2 connections warm via curl_cffi upkeep
+            for account in app.state.pool.accounts:
+                if getattr(account.http, "_client", None) is not None:
+                    try:
+                        await account.http.client.upkeep()
+                    except Exception:  # noqa: BLE001
+                        pass
+
             # Awake: refresh if it's been 30m since last refresh
             if now - last_refresh >= 30 * 60:
                 last_refresh = now

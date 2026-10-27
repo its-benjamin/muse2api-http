@@ -68,8 +68,10 @@ def test_fingerprint_defaults_and_env_overrides(monkeypatch):
 def test_http_session_uses_configured_proxy():
     client = MuseHTTP(Settings(proxy="socks5://127.0.0.1:1080"),
                       cookies={"hatch_sess": "test"}).client
-    assert client.proxies == {"http": "socks5://127.0.0.1:1080",
-                              "https": "socks5://127.0.0.1:1080"}
+    assert client.proxies in (
+        {"all": "socks5://127.0.0.1:1080"},
+        {"http": "socks5://127.0.0.1:1080", "https": "socks5://127.0.0.1:1080"},
+    )
     assert MuseHTTP(Settings(), cookies={"hatch_sess": "test"}).client.proxies == {}
 
 
