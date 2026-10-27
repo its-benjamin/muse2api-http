@@ -22,9 +22,6 @@ jobs:
           - os: macos-14
             artifact_name: muse2api-darwin-arm64
             data_sep: ":"
-          - os: macos-13
-            artifact_name: muse2api-darwin-amd64
-            data_sep: ":"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

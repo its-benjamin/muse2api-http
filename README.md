@@ -84,8 +84,7 @@ Prebuilt binaries are published with each release:
 1. Download the latest binary for your OS from [GitHub Releases](https://github.com/its-benjamin/muse2api-http/releases):
    - **Windows (x64)**: `muse2api-windows-amd64.exe`
    - **Linux (x64)**: `muse2api-linux-amd64`
-   - **macOS (Apple Silicon M1–M4)**: `muse2api-darwin-arm64`
-   - **macOS (Intel)**: `muse2api-darwin-amd64`
+   - **macOS (Apple Silicon M-series)**: `muse2api-darwin-arm64`
    - Verify integrity with `SHA256SUMS`.
 2. Place your `cookies_muse.txt` in the same directory.
 3. Run the server:
