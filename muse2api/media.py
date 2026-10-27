@@ -7,14 +7,35 @@ reachable over the same Noise gateway (``/media/raw/<path>``).
 
 from __future__ import annotations
 
+import ipaddress
 import mimetypes
+import os
 import re
+import socket
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 from .gateway import HatchConnection
+
+# Hard ceiling for any media we accept from a client or hold in memory.
+MAX_MEDIA_BYTES = 150 * 1024 * 1024
+_FALSE_VALUES = {"", "0", "false", "no", "off"}
+
+
+def media_limit_label() -> str:
+    return f"{MAX_MEDIA_BYTES // (1024 * 1024)} MiB"
+
+
+class MediaFetchError(RuntimeError):
+    """A remote media URL was rejected or could not be fetched safely."""
+
+
+class MediaTooLargeError(RuntimeError):
+    """Downloaded media exceeded the configured ceiling."""
+
 
 
 @dataclass(slots=True)
@@ -155,20 +176,112 @@ class MediaStore:
         return f"{self.public_base}/{name}"
 
 
-async def download_media(conn: HatchConnection, ref: MediaRef, *, impersonate: str = "chrome") -> bytes:
+def _private_hosts_allowed() -> bool:
+    raw = os.environ.get("MUSE2API_ALLOW_PRIVATE_URLS")
+    return raw is not None and raw.strip().lower() not in _FALSE_VALUES
+
+
+def assert_public_host(host: str) -> None:
+    """Reject hosts that resolve to loopback/private/link-local/reserved ranges.
+
+    Client-supplied image URLs are fetched by this process, so an unrestricted
+    fetch is an SSRF pivot into the host network and cloud metadata services.
+    """
+    if _private_hosts_allowed():
+        return
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise MediaFetchError(f"could not resolve {host}") from exc
+    addresses = {info[4][0] for info in infos}
+    if not addresses:
+        raise MediaFetchError(f"could not resolve {host}")
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address.split("%", 1)[0])
+        except ValueError as exc:
+            raise MediaFetchError(f"unparseable address for {host}") from exc
+        if not ip.is_global:
+            raise MediaFetchError(
+                f"refusing to fetch {host} -> {ip}: non-public address "
+                "(set MUSE2API_ALLOW_PRIVATE_URLS=1 to allow it)"
+            )
+
+
+async def fetch_public_media(
+    url: str,
+    *,
+    impersonate: str = "chrome",
+    timeout: float = 90.0,
+    max_bytes: int = MAX_MEDIA_BYTES,
+    max_redirects: int = 5,
+) -> tuple[bytes, str | None]:
+    """Download a user-supplied URL with redirect, host and size guards."""
+    from curl_cffi.requests import AsyncSession
+
+    current = url
+    async with AsyncSession(impersonate=impersonate, timeout=timeout) as client:
+        for _ in range(max_redirects + 1):
+            parsed = urlparse(current)
+            if parsed.scheme not in {"http", "https"}:
+                raise MediaFetchError(f"unsupported URL scheme: {parsed.scheme or '(none)'}")
+            if not parsed.hostname:
+                raise MediaFetchError("URL has no host")
+            # Validate every hop: a public URL may redirect to 127.0.0.1.
+            assert_public_host(parsed.hostname)
+            response = await client.get(current, allow_redirects=False, stream=True)
+            try:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise MediaFetchError("redirect without a Location header")
+                    current = urljoin(current, location)
+                    continue
+                if not 200 <= response.status_code < 300:
+                    raise MediaFetchError(f"HTTP {response.status_code} for {current}")
+                declared = response.headers.get("content-length") or ""
+                if declared.isdigit() and int(declared) > max_bytes:
+                    raise MediaFetchError("remote media exceeds the size limit")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_content():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise MediaFetchError("remote media exceeds the size limit")
+                    chunks.append(chunk)
+                if not chunks:
+                    raise MediaFetchError("remote media is empty")
+                return b"".join(chunks), response.headers.get("content-type")
+            finally:
+                await response.aclose()
+    raise MediaFetchError("too many redirects")
+
+
+async def download_media(conn: HatchConnection, ref: MediaRef, *, impersonate: str = "chrome",
+                         max_bytes: int = MAX_MEDIA_BYTES) -> bytes:
     paths: list[str] = []
     if ref.path:
         clean = _normalize_path(ref.path)
         # The gateway accepts both /media/raw and /fs/raw; try the direct media
         # route first, then fall back to the filesystem route.
         paths.extend([f"/media/raw/{clean}", f"/fs/raw/{clean}"])
+
+    def check(data: bytes) -> bytes:
+        if len(data) > max_bytes:
+            raise MediaTooLargeError(
+                f"downloaded media exceeds {max_bytes // (1024 * 1024)} MiB"
+            )
+        return data
+
     last_error: Exception | None = None
     for path in paths:
         try:
             response = await conn.request("GET", path, {}, timeout=300.0)
             if 200 <= response.status < 300 and response.body:
-                return response.body
+                return check(response.body)
             last_error = RuntimeError(f"{path} -> HTTP {response.status}")
+        except MediaTooLargeError:
+            raise
         except Exception as exc:  # noqa: BLE001
             last_error = exc
     # Signed VM URLs are not publicly reachable, but an external URL may be.
@@ -184,8 +297,10 @@ async def download_media(conn: HatchConnection, ref: MediaRef, *, impersonate: s
             ) as client:
                 response = await client.get(ref.url)
                 if 200 <= response.status_code < 300 and response.content:
-                    return response.content
+                    return check(response.content)
                 last_error = RuntimeError(f"HTTP {response.status_code} for {ref.url}")
+        except MediaTooLargeError:
+            raise
         except Exception as exc:  # noqa: BLE001
             last_error = exc
     raise RuntimeError(f"could not download {ref.identity}: {last_error}")

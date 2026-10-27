@@ -7,13 +7,15 @@ edge proxies that reject some stock TLS fingerprints on authenticated routes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .gateway import HatchConnection
@@ -62,7 +64,7 @@ def _parse_http_version(value: str):
         "2": CurlHttpVersion.V2_0,
         "3": CurlHttpVersion.V3,
         "auto": None,
-    }.get(value, None)
+    }.get(value)
 
 
 class MuseAuthError(RuntimeError):
@@ -73,19 +75,106 @@ class MuseUpstreamError(RuntimeError):
     pass
 
 
+def _cookie_cache_path(state_dir: Path, source: Path) -> Path:
+    try:
+        key = str(source.resolve())
+    except OSError:  # pragma: no cover - missing drive/permission
+        key = str(source)
+    digest = hashlib.sha256(key.encode()).hexdigest()[:10]
+    return state_dir / f"cookies-{digest}.json"
+
+
 class MuseHTTP:
-    def __init__(self, settings: Settings, cookies: dict[str, str] | None = None) -> None:
+    def __init__(self, settings: Settings, cookies: dict[str, str] | None = None,
+                 cookie_path: str | Path | None = None) -> None:
         self.settings = settings
-        self.jar = CookieJar(cookies or parse_cookie_file(settings.cookies_file))
+        self._cookie_source = Path(cookie_path) if cookie_path else Path(settings.cookies_file)
+        self._cache_path = _cookie_cache_path(settings.state_dir, self._cookie_source)
+        if cookies is None:
+            try:
+                cookies = parse_cookie_file(self._cookie_source)
+            except (OSError, CookieError):
+                cookies = {}
+        self.jar = CookieJar(cookies)
+        # Prefer the last rotated jar over a stale export, unless the operator
+        # just wrote a newer cookie file.
+        self._restore_cached_cookies()
         missing = [name for name in ("hatch_sess",) if name not in self.jar]
         if missing:
             raise CookieError(
                 "missing hatch_sess cookie; export fresh cookies from a logged-in muse.ai tab"
             )
+        self._persisted = self.jar.copy()
+        self._last_persist = 0.0
         self._http_version = _parse_http_version(settings.http_version)
         self._client: AsyncSession | None = self._create_client()
         self._cached_session: GatewaySession | None = None
         self._cached_at = 0.0
+
+    # -- cookie persistence ------------------------------------------------
+
+    def _restore_cached_cookies(self) -> None:
+        try:
+            if not self._cache_path.is_file():
+                return
+            source_mtime = (
+                self._cookie_source.stat().st_mtime if self._cookie_source.exists() else 0.0
+            )
+            if self._cache_path.stat().st_mtime < source_mtime:
+                return  # the operator exported fresh cookies; the source wins
+            data = json.loads(self._cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            log.debug("could not restore rotated cookies: %s", exc)
+            return
+        if not isinstance(data, dict):
+            return
+        self.jar.merge({str(k): str(v) for k, v in data.items() if isinstance(v, str)})
+        log.info("restored rotated muse.ai cookies from %s", self._cache_path)
+
+    def _persist_cookies(self, *, force: bool = False) -> None:
+        """Atomically save rotated cookies so restarts reuse the live session."""
+        now = time.monotonic()
+        if not force and now - self._last_persist < 30.0:
+            return
+        cookies = self.jar.copy()
+        if cookies == self._persisted:
+            self._last_persist = now
+            return
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self._cache_path.with_suffix(".tmp")
+            temp.write_text(json.dumps(cookies, indent=2), encoding="utf-8")
+            temp.replace(self._cache_path)
+        except OSError as exc:  # pragma: no cover - best effort
+            log.debug("could not persist rotated cookies: %s", exc)
+            return
+        self._persisted = cookies
+        self._last_persist = now
+
+    async def reload_cookies(self) -> bool:
+        """Pick up a freshly exported cookie file without a restart."""
+        try:
+            fresh = parse_cookie_file(self._cookie_source)
+            source_mtime = self._cookie_source.stat().st_mtime
+        except (OSError, CookieError) as exc:
+            log.debug("could not reload cookies from %s: %s", self._cookie_source, exc)
+            return False
+        try:
+            cache_mtime = self._cache_path.stat().st_mtime
+        except OSError:
+            cache_mtime = 0.0
+        if cache_mtime and source_mtime <= cache_mtime:
+            # The cached jar is the fresher one; never roll back a live session
+            # because the original export is still lying around.
+            return False
+        if not any(self.jar.get(name) != value for name, value in fresh.items()):
+            return False
+        self.jar.merge(fresh)
+        await self.close()
+        self._cached_session = None
+        self._persist_cookies(force=True)
+        log.info("reloaded muse.ai cookies from %s", self._cookie_source)
+        return True
 
     def _create_client(self) -> AsyncSession:
         return AsyncSession(
@@ -119,7 +208,8 @@ class MuseHTTP:
         try:
             for cookie in self._client.cookies.jar:
                 if cookie.name and cookie.value:
-                    self.jar._cookies[cookie.name] = cookie.value
+                    self.jar.merge({cookie.name: cookie.value})
+            self._persist_cookies()
         except Exception:  # pragma: no cover - jar internals differ by version
             pass
 
@@ -177,7 +267,11 @@ class MuseHTTP:
     # -- bootstrap ---------------------------------------------------------
 
     async def session_info(self) -> dict:
-        return await self.request_json("GET", "/api/session", params={"vm_state": "live"})
+        info = await self.request_json("GET", "/api/session", params={"vm_state": "live"})
+        # /api/session rotates the long-lived cookies; save immediately so a
+        # restart never falls back to a stale export.
+        self._persist_cookies(force=True)
+        return info
 
     async def _wake_vm(self, vm_id: str) -> None:
         await self.request_json(
@@ -286,8 +380,6 @@ class MuseHTTP:
 
     def _persist_session(self, session: GatewaySession) -> None:
         try:
-            import json
-
             self.settings.ensure_state_dir()
             (self.settings.state_dir / "gateway.json").write_text(
                 json.dumps(
@@ -300,10 +392,7 @@ class MuseHTTP:
                 ),
                 encoding="utf-8",
             )
-            (self.settings.state_dir / "cookies.json").write_text(
-                json.dumps(self.jar.copy(), indent=2),
-                encoding="utf-8",
-            )
+            self._persist_cookies(force=True)
         except Exception:  # pragma: no cover - best effort
             pass
 

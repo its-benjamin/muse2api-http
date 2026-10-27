@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .approvals import POLICIES as APPROVAL_POLICIES
 from .approvals import handle_pending
 from .config import Settings
@@ -85,7 +86,7 @@ class SessionStore:
                     bool(value.get("last_system_sent")),
                 )
 
-    def _save(self) -> None:
+    def save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
@@ -111,7 +112,7 @@ class SessionStore:
             self._items[key] = state
         state.last_used = now
         self._sweep(now)
-        self._save()
+        self.save()
         return state
 
     def reset(self, key: str) -> ChatSession:
@@ -569,11 +570,6 @@ class ChatService:
                             if on_delta:
                                 on_delta(text)
                     break
-                pump_task.cancel()
-                try:
-                    await pump_task
-                except asyncio.CancelledError:
-                    pass
             text = "".join(parts)
             if not text:
                 raise GatewayError(f"muse returned an empty reply within {timeout:.0f}s")
@@ -612,7 +608,7 @@ class ChatService:
                     "client_id": client_id,
                     "platform": "web",
                     "display_name": "muse2api-http",
-                    "version": "0.1.0",
+                    "version": __version__,
                     "capabilities": {
                         "data_sources": {},
                         "device_commands": {},

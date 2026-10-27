@@ -100,6 +100,12 @@ class CookieJar:
             self._cookies[name] = value
             self._extra.pop(name, None)
 
+    def merge(self, values: dict[str, str]) -> None:
+        """Overlay ``values`` onto the jar (later values win)."""
+        for name, value in values.items():
+            if name and value:
+                self._cookies[name] = value
+
     def get(self, name: str) -> str | None:
         return self._cookies.get(name)
 

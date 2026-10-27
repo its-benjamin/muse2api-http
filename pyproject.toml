@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muse2api-http"
+description = "OpenAI-compatible HTTP bridge for muse.ai over its Hatch/Noise transport (no browser)"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "curl_cffi>=0.7",
+    "websockets>=13",
+    "cryptography>=43",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+muse2api = "muse2api.__main__:main"
+
+[tool.setuptools]
+packages = ["muse2api"]
+
+[tool.setuptools.dynamic]
+version = {attr = "muse2api.__version__"}
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+# B008: FastAPI dependency defaults are function calls by design.
+# SIM105: explicit try/except/pass is clearer in async cleanup paths.
+ignore = ["B008", "SIM105"]

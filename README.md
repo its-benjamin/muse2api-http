@@ -24,11 +24,14 @@ right from `/v1/models`; image generation rides the OpenAI-compatible
 |---|---|
 | `POST /v1/chat/completions` | Streaming/non-streaming chat with native image attachments, OpenAI `tools` bridging (auto / required / forced), and multi-turn isolation via `x-muse-session` |
 | `POST /v1/responses` | Codex-style Responses API adapter; `function_call` output items and `function_call_arguments` streaming when tools are used |
-| `POST /v1/images/generations` | Text-to-image; returns a hosted media URL (and `b64_json` when requested) |
+| `POST /v1/images/generations` | Text-to-image; returns a hosted media URL and `b64_json` (reference image accepted as URL, data URI or base64) |
 | `POST /v1/images/edits` | Image edit / image-to-image with reference images |
+| `POST /v1/images/tasks` | Async image task; `Idempotency-Key` (or `idempotency_key`) returns the existing task instead of generating twice |
+| `GET /v1/images/tasks/{id}` | Poll an async image task |
 | `POST /v1/videos` | Text-to-video and first-frame image-to-video (`reference_image`, `image_url` or `image` as URL/data-URI/base64), async task id |
 | `GET /v1/videos/{id}` | Poll video status; completed tasks return the media URL |
 | `GET /v1/media/{name}`, `/media/{name}` | Local cache for generated media |
+| `GET /v1/sessions` / `GET /v1/sessions/{id}/history` | Raw upstream session and history reads |
 | `GET /healthz` | Per-account health, VM id, uptime |
 | `POST /v1/session/refresh` / `reset` | Refresh the upstream session; forget local side-chat state |
 
@@ -106,6 +109,28 @@ against the API host. The `/v1/media/{name}` route itself stays the same.
 `MUSE_COOKIE_FILES=a.txt,b.txt` (or repeated `MUSE_COOKIE_FILE`) enables the
 account pool. A failing login is put on a cooldown and the next healthy account
 is used; `/healthz` shows each account. A single file is the normal setup.
+
+### Cookies stay alive on their own
+
+muse.ai rotates its session cookies on use, so the export you start with is not
+the cookie set the server ends up with. The bridge keeps the live jar instead of
+re-reading the file on every restart:
+
+- Rotated `Set-Cookie` values are merged into the jar after every request and
+  written to `.muse-state/cookies-<hash>.json` (atomic replace, at most every
+  30 s and immediately after `/api/session`).
+- On startup the cached jar is used when it is newer than the exported file; a
+  fresh export you drop in later always wins.
+- If authentication fails (401/403), the account reloads the configured cookie
+  file and retries once before it is cooled down — so replacing
+  `cookies_muse.txt` is picked up without restarting the server.
+- The keepalive loop calls `/api/session` every 6 hours (and the pool refreshes
+  every 30 minutes while the server is active), refreshing the rolling cookies
+  even when no client requests are coming in.
+
+You only need a new export if the account was logged out or the VM was unused
+for longer than the cookie lifetime (48 hours for the short-lived cookie) — the
+cache keeps the last live values, but it cannot resurrect an expired login.
 
 ## Protocol discovery
 
@@ -185,11 +210,19 @@ random headers:
 | `MUSE_MODEL` | `muse-spark` | Advertised model id |
 | `MUSE_SESSION_MODE` | `thread` | `thread` or `main` |
 | `MUSE_CHAT_TIMEOUT` | `300` | Reply deadline, seconds |
+| `MUSE2API_CONCURRENCY` | `2` | Concurrent upstream generations |
+| `MUSE_IMAGE_TIMEOUT` | `240` | Image generation deadline, seconds |
+| `MUSE_VIDEO_TIMEOUT` | `600` | Video generation deadline, seconds |
+| `MUSE_REQUEST_TIMEOUT` | `60` | Per-request upstream HTTP timeout |
+| `MUSE_LISTEN_MS` | `90000` | Gateway listen window, milliseconds |
+| `MUSE_IDLE_SLEEP_SECONDS` | `1800` | Pause keepalive and release sessions after this much inactivity (`0` disables) |
 | `MUSE2API_APPROVAL_POLICY` | `off` | `off`, `allow_once`, `allow_session`, or `deny` agent permission prompts |
 | `MUSE2API_PUBLIC_BASE` | unset | Absolute prefix for generated media URLs |
+| `MUSE2API_ALLOW_PRIVATE_URLS` | unset | Allow reference-image URLs that resolve to private/loopback hosts (SSRF guard opt-out) |
 | `MUSE_VIDEO_BLOCK_SECONDS` | `21600` | Suppress new video tasks after a region refusal |
 | `MUSE_SESSION_CACHE` | `45` | Bootstrap cache, seconds |
 | `MUSE_STATE_DIR` | `.muse-state` | Local session/media state |
+| `MUSE_LOG_LEVEL` | `info` | `debug`, `info`, `warning`, ... |
 | `MUSE_LB_HOST` / `MUSE_WS_PATH` / `MUSE_APP_ID` | discovered | Gateway overrides |
 | `MUSE_CVM_RV_KEY` | unset | CVM recovery key |
 | `MUSE_ATTESTATION_CMD` | unset | External attestation verifier |
@@ -214,8 +247,11 @@ random headers:
   launching another doomed generation. The block is stored in
   `.muse-state/video_block.json` and applies to the whole pool; delete that file
   if you add an account from a supported region.
-- **Video tasks are in-memory.** IDs return 404 after a restart; the generated
-  file itself stays under `.muse-state/media`.
+- **Video/image tasks are persisted, not resumable.** Task ids and results live
+  in `.muse-state/tasks.json`, so polling survives a restart; a task that was
+  queued or running when the process stopped is marked `failed` on startup
+  instead of hanging forever. Generated files stay under `data/media`
+  (`<MUSE_STATE_DIR>/../data/media`).
 - **Connector OAuth consent is not automated.** Only egress/network/connector
   *action* approvals scoped to the running thread can be auto-answered.
 - **Chat context lives upstream.** Deleting `.muse-state/chat_sessions.json`
@@ -224,11 +260,15 @@ random headers:
 ## Tests
 
 ```bash
+python -m pip install -r requirements-dev.txt
+python -m ruff check muse2api tests
 python -m pytest tests -q
 ```
 
-Codec, Noise, CVM proof construction and protocol-discovery parsing are covered
-by unit tests. The live smoke used during development:
+`.github/workflows/tests.yml` runs lint and the suite on Python 3.11–3.13.
+Codec, Noise, CVM proof construction, protocol discovery, request validation,
+reference-image SSRF guards and task recovery are covered by unit tests. The
+live smoke used during development:
 
 ```bash
 python -m muse2api ping
@@ -241,4 +281,12 @@ curl -s localhost:18610/v1/chat/completions \
 
 Cookies are bearer credentials. `cookies*.txt`, `.muse-state/` and captured HAR
 or web-source artifacts are git-ignored. Generated media is cached under
-`.muse-state/media` and served only from that directory.
+`data/media` and served only from that directory.
+
+Client-supplied reference-image URLs are fetched by the server, so the fetch is
+guarded: only public HTTP(S) hosts are allowed, every redirect hop is re-checked,
+and downloads (reference images and generated media) are capped at 150 MiB.
+Set `MUSE2API_ALLOW_PRIVATE_URLS=1` only if you intentionally pull references
+from a LAN host. `MUSE2API_KEY` is compared in constant time; media URLs contain
+unguessable UUIDs and are served without auth, so treat `MUSE2API_PUBLIC_BASE`
+as public.

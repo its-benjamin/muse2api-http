@@ -91,9 +91,9 @@ def pending_for_session(records: Iterable[Any], session_id: str | None) -> list[
     result: list[dict] = []
     for raw in records:
         record = _record(raw)
-        if record and is_pending(record) and matches_session(record, session_id):
-            if approval_id(record):
-                result.append(record)
+        if (record and is_pending(record) and matches_session(record, session_id)
+                and approval_id(record)):
+            result.append(record)
     return result
 
 

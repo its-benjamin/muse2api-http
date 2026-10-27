@@ -302,49 +302,58 @@ def extract_tool_calls_from_text(text: str) -> tuple[list[dict], str]:
             cleaned = cleaned.replace(match.group(0), "")
     if not calls:
         for match in list(_FENCED_TOOL_RE.finditer(text)):
-            payload=_parse_maybe_json(match.group(1))
-            if isinstance(payload,list):
+            payload = _parse_maybe_json(match.group(1))
+            if isinstance(payload, list):
                 for entry in payload:
-                    name=_name_from(entry)
-                    if not name: continue
-                    calls.append({"name":name,"arguments":_args_from(entry)})
+                    name = _name_from(entry)
+                    if not name:
+                        continue
+                    calls.append({"name": name, "arguments": _args_from(entry)})
                 cleaned = cleaned.replace(match.group(0), "")
                 break
-            else:
-                payload_dict=_parse_maybe_json(match.group(1))
-                name=_name_from(payload_dict)
-                if name:
-                    calls.append({"name":name,"arguments":_args_from(payload_dict)})
-                    cleaned = cleaned.replace(match.group(0), "")
-                    break
+            name = _name_from(payload)
+            if name:
+                calls.append({"name": name, "arguments": _args_from(payload)})
+                cleaned = cleaned.replace(match.group(0), "")
+                break
     if not calls:
         # Bare JSON object/array in prose (tokenizer pattern from the reference
         # implementation): ```tool_name``` blocks where the contents is a JSON
         # object with "name" / "tool" keys.
         for match in list(re.finditer(r"(?:^|\\n)\\s*([\\{\\[][^\\n]*(?:\\n[^\\n]*)*)", text)):
-            start=match.start(1)
+            start = match.start(1)
             # Try to balance from start until valid JSON of the same bracket kind.
-            open_ch=text[start]; close_ch='}' if open_ch=='{' else ']'
-            depth=0
-            end=None
-            for idx in range(start, min(start+5000, len(text))):
-                ch=text[idx]
-                if ch==open_ch: depth+=1
-                elif ch==close_ch: depth-=1
-                if depth==0:
-                    end=idx+1; break
-            snippet=text[start:end]
+            open_ch = text[start]
+            close_ch = "}" if open_ch == "{" else "]"
+            depth = 0
+            end = None
+            for idx in range(start, min(start + 5000, len(text))):
+                ch = text[idx]
+                if ch == open_ch:
+                    depth += 1
+                elif ch == close_ch:
+                    depth -= 1
+                if depth == 0:
+                    end = idx + 1
+                    break
+            snippet = text[start:end]
             if snippet and snippet.lstrip()[0] in "{[":
-                parsed=_parse_maybe_json(snippet)
-                entries=[parsed] if isinstance(parsed,dict) else parsed if isinstance(parsed,list) else []
-                took=0
+                parsed = _parse_maybe_json(snippet)
+                if isinstance(parsed, dict):
+                    entries = [parsed]
+                elif isinstance(parsed, list):
+                    entries = parsed
+                else:
+                    entries = []
+                took = 0
                 for entry in entries:
-                    name=_name_from(entry)
-                    if not name: continue
-                    calls.append({"name":name,"arguments":_args_from(entry)})
-                    took+=1
+                    name = _name_from(entry)
+                    if not name:
+                        continue
+                    calls.append({"name": name, "arguments": _args_from(entry)})
+                    took += 1
                 if took:
-                    cleaned = cleaned.replace(text[max(0,start-4):end], "")
+                    cleaned = cleaned.replace(text[max(0, start - 4):end], "")
                     break
     if not calls:
         for match in _BARE_ARRAY_RE.finditer(text):

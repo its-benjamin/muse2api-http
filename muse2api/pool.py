@@ -18,7 +18,7 @@ from pathlib import Path
 from .config import Settings
 from .cookies import parse_cookie_file
 from .gateway import GatewaySession, HatchConnection
-from .http import MuseHTTP
+from .http import MuseAuthError, MuseHTTP
 from .protocol import ProtocolConfig
 
 log = logging.getLogger("muse2api.pool")
@@ -76,6 +76,10 @@ class Account:
         self.last_used = time.time()
 
 
+class PoolExhausted(RuntimeError):
+    """Every configured account failed or is cooling down."""
+
+
 class AccountPool:
     def __init__(self, settings: Settings, accounts: list[Account] | None = None,
                  protocol: ProtocolConfig | None = None) -> None:
@@ -99,7 +103,8 @@ class AccountPool:
             try:
                 cookies = parse_cookie_file(path)
                 accounts.append(Account(name=Path(path).name or f"account-{index + 1}",
-                                        http=MuseHTTP(settings, cookies=cookies)))
+                                        http=MuseHTTP(settings, cookies=cookies,
+                                                      cookie_path=path)))
             except Exception as exc:  # noqa: BLE001
                 log.error("could not load cookies from %s: %s", path, exc)
         return accounts
@@ -115,7 +120,30 @@ class AccountPool:
         account = min(self.accounts, key=lambda item: item.cooldown_until)
         account.healthy = True
         account.cooldown_until = 0.0
+        self._index = (self.accounts.index(account) + 1) % count
         return account
+
+    async def _open(self, account: Account) -> tuple[Account, GatewaySession, HatchConnection]:
+        session = await account.http.bootstrap()
+        conn = await HatchConnection.connect(
+            session,
+            lb_host=self.protocol.lb_host,
+            ws_path=self.protocol.ws_path,
+            cvm_rv_key=self.settings.cvm_rv_key,
+            attestation_cmd=self.settings.attestation_cmd,
+            ws_client=account.http.client,
+            impersonate=self.settings.impersonate,
+            user_agent=self.settings.user_agent,
+        )
+        return account, session, conn
+
+    async def _retry_after_reload(self, account: Account) -> bool:
+        """Pick up a re-exported cookie file once instead of cooling down."""
+        try:
+            return await account.http.reload_cookies()
+        except Exception as exc:  # noqa: BLE001 - reload is best effort
+            log.debug("cookie reload failed for %s: %s", account.name, exc)
+            return False
 
     async def connect(self) -> tuple[Account, GatewaySession, HatchConnection]:
         last_error: Exception | None = None
@@ -123,24 +151,21 @@ class AccountPool:
             order = [self._next() for _ in range(len(self.accounts))]
         for account in order:
             try:
-                session = await account.http.bootstrap()
-                conn = await HatchConnection.connect(
-                    session,
-                    lb_host=self.protocol.lb_host,
-                    ws_path=self.protocol.ws_path,
-                    cvm_rv_key=self.settings.cvm_rv_key,
-                    attestation_cmd=self.settings.attestation_cmd,
-                    ws_client=account.http.client,
-                    impersonate=self.settings.impersonate,
-                    user_agent=self.settings.user_agent,
-                )
+                result = await self._open(account)
                 account.mark_good()
-                return account, session, conn
+                return result
             except Exception as exc:  # noqa: BLE001 - try the next login
                 last_error = exc
-                account.mark_bad(exc)
-                log.warning("account %s failed: %s", account.name, exc)
-        raise RuntimeError(f"all muse.ai accounts failed; last error: {last_error}")
+                if isinstance(exc, MuseAuthError) and await self._retry_after_reload(account):
+                    try:
+                        result = await self._open(account)
+                        account.mark_good()
+                        return result
+                    except Exception as retry_exc:  # noqa: BLE001
+                        last_error = retry_exc
+                account.mark_bad(last_error)
+                log.warning("account %s failed: %s", account.name, last_error)
+        raise PoolExhausted(f"all muse.ai accounts failed; last error: {last_error}")
 
     async def bootstrap(self) -> tuple[Account, GatewaySession]:
         last_error: Exception | None = None
@@ -151,8 +176,39 @@ class AccountPool:
                 return account, session
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
+                if isinstance(exc, MuseAuthError) and await self._retry_after_reload(account):
+                    try:
+                        session = await account.http.bootstrap(force=True)
+                        account.mark_good()
+                        return account, session
+                    except Exception as retry_exc:  # noqa: BLE001
+                        last_error = retry_exc
+                account.mark_bad(last_error)
+        raise PoolExhausted(f"all muse.ai accounts failed; last error: {last_error}")
+
+    async def renew_cookies(self) -> int:
+        """Refresh rolling cookies account by account; returns successes."""
+        renewed = 0
+        for account in self.accounts:
+            try:
+                await account.http.session_info()
+            except MuseAuthError:
+                if not await self._retry_after_reload(account):
+                    account.mark_bad(MuseAuthError("cookie renewal rejected"))
+                    continue
+                try:
+                    await account.http.session_info()
+                except Exception as exc:  # noqa: BLE001 - keep other accounts alive
+                    account.mark_bad(exc)
+                    continue
+            except Exception as exc:  # noqa: BLE001
                 account.mark_bad(exc)
-        raise RuntimeError(f"all muse.ai accounts failed; last error: {last_error}")
+                continue
+            # mark_good() would inflate the load-balancing `uses` counter.
+            account.healthy = True
+            account.cooldown_until = 0.0
+            renewed += 1
+        return renewed
 
     async def refresh_all(self) -> None:
         for account in self.accounts:

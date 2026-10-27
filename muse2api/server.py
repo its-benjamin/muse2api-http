@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -33,12 +34,19 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from . import __version__
 from .chat import ChatResult, ChatService, session_key
 from .config import Settings
 from .gateway import GatewayError
 from .http import MuseAuthError, MuseUpstreamError
-from .media import MediaStore, download_media
-from .pool import AccountPool
+from .media import (
+    MAX_MEDIA_BYTES,
+    MediaStore,
+    download_media,
+    fetch_public_media,
+    media_limit_label,
+)
+from .pool import AccountPool, PoolExhausted
 from .protocol import ProtocolConfig
 from .tool_bridge import (
     apply_tool_bridge,
@@ -141,8 +149,35 @@ def error_response(message: str, *, status: int = 400, type_: str = "invalid_req
     )
 
 
-_MAX_REFERENCE_BYTES = 25 * 1024 * 1024
 _DATA_URI_HEADER = "data:"
+
+
+def int_field(body: dict[str, Any], *names: str, default: int, minimum: int,
+              maximum: int) -> int:
+    """Read an integer body field, rejecting bad types and out-of-range values."""
+    for name in names:
+        if body.get(name) is None:
+            continue
+        value = body[name]
+        if isinstance(value, bool):
+            raise ApiError(f"{name} must be an integer")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise ApiError(f"{name} must be an integer") from None
+        if not minimum <= number <= maximum:
+            raise ApiError(f"{name} must be between {minimum} and {maximum}")
+        return number
+    return default
+
+
+def require_messages(messages: Any) -> list[dict[str, Any]]:
+    if not isinstance(messages, list) or not messages:
+        raise ApiError("messages must be a non-empty array")
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            raise ApiError(f"messages[{index}] must be an object")
+    return messages
 
 
 async def reference_image_item(value: Any) -> dict[str, Any] | None:
@@ -176,20 +211,9 @@ async def reference_image_item(value: Any) -> dict[str, Any] | None:
         return None
     if url is not None:
         try:
-            from curl_cffi.requests import AsyncSession
-
-            async with AsyncSession(impersonate="chrome", timeout=90) as client:
-                response = await client.get(url)
-                if not (200 <= response.status_code < 300):
-                    raise ApiError(
-                        f"could not download reference image: HTTP {response.status_code}",
-                        status=400, code="invalid_image",
-                    )
-                data = response.content
-                mime = response.headers.get("content-type") or mime
-        except ApiError:
-            raise
-        except Exception as exc:
+            data, fetched_mime = await fetch_public_media(url)
+            mime = fetched_mime or mime
+        except Exception as exc:  # network, TLS, redirect or SSRF-guard rejection
             raise ApiError(
                 f"could not download reference image: {exc}",
                 status=400, code="invalid_image",
@@ -202,8 +226,8 @@ async def reference_image_item(value: Any) -> dict[str, Any] | None:
                            code="invalid_image") from exc
     if not data:
         raise ApiError("reference image is empty", code="invalid_image")
-    if len(data) > _MAX_REFERENCE_BYTES:
-        raise ApiError("reference image exceeds 25 MiB", code="invalid_image")
+    if len(data) > MAX_MEDIA_BYTES:
+        raise ApiError(f"reference image exceeds {media_limit_label()}", code="invalid_image")
     mime = (mime or mimetypes.guess_type(url or "")[0] or "image/png").split(";", 1)[0]
     if not mime.startswith("image/"):
         raise ApiError("reference image must be an image", code="invalid_image")
@@ -332,10 +356,37 @@ def build_prompt(messages: list[dict], state) -> str:
     return latest
 
 
-def openai_model(model: str | None, default: str) -> str:
-    if not model:
-        return default
-    return model
+def openai_model(model: Any, default: str) -> str:
+    return model.strip() if isinstance(model, str) and model.strip() else default
+
+
+def record_turn(state, messages: list[dict[str, Any]]) -> None:
+    """Remember the transcript shape so the next turn can send only the delta."""
+    state.last_user_count = sum(1 for m in messages if str(m.get("role") or "") == "user")
+    system_text = "\n\n".join(
+        content_text(m.get("content")).strip()
+        for m in messages if str(m.get("role") or "") == "system"
+    )
+    state.system_hash = hashlib.sha256(system_text.encode()).hexdigest()[:16]
+    state.last_system_sent = True
+
+
+async def conversation_prompt(messages: list[dict[str, Any]], state,
+                              empty_message: str = "no non-empty user message"):
+    """Build the outbound prompt and the newest user turn's image attachments."""
+    images = await latest_user_images(messages)
+    if last_user_text(messages):
+        return build_prompt(messages, state), images
+    if images:
+        system_text = "\n\n".join(
+            content_text(m.get("content")).strip()
+            for m in messages if str(m.get("role") or "") == "system"
+            and content_text(m.get("content")).strip()
+        )
+        fallback = "user: Describe the attached image."
+        prompt = f"System: {system_text}\n\n{fallback}" if system_text else fallback
+        return prompt, images
+    raise ApiError(empty_message)
 
 
 def sse(data: Any) -> str:
@@ -376,7 +427,7 @@ class TaskStore:
         except Exception:  # noqa: BLE001
             self.tasks = {}
 
-    def _save(self) -> None:
+    def save(self) -> None:
         if self.path is None:
             return
         try:
@@ -401,7 +452,7 @@ class TaskStore:
             "text": "",
         }
         self.tasks[task_id] = task
-        self._save()
+        self.save()
         return task
 
     def get(self, task_id: str) -> dict | None:
@@ -412,7 +463,23 @@ class TaskStore:
         if task is None:
             return
         task.update(fields)
-        self._save()
+        self.save()
+
+
+def recover_interrupted_tasks(store: TaskStore) -> int:
+    """Fail tasks that were mid-flight when the previous process stopped.
+
+    Video/image task ids are persisted, but nothing can resume an interrupted
+    generation, so reporting them as queued/running forever misleads pollers.
+    """
+    stale = [task for task in store.tasks.values()
+             if isinstance(task, dict) and task.get("status") in {"queued", "running"}]
+    for task in stale:
+        task["status"] = "failed"
+        task["error"] = "server restarted before the task completed"
+    if stale:
+        store.save()
+    return len(stale)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -439,6 +506,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 key = task.get("idempotency_key")
                 if key:
                     app.state.image_tasks[key] = task
+        recover_interrupted_tasks(app.state.tasks)
         app.state.sem = asyncio.Semaphore(int(os.environ.get("MUSE2API_CONCURRENCY", "2")))
         app.state.locks = {}
         app.state.started_at = time.time()
@@ -459,7 +527,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # keepalive task handles both ping and 6h cookie renewal
             await pool.close()
 
-    app = FastAPI(title="muse2api-http", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="muse2api-http", version=__version__, lifespan=lifespan)
     now_init = time.time()
     app.state.started_at = now_init
     app.state.last_active_at = now_init
@@ -493,12 +561,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if now - last_cookie_renew >= 6 * 3600:
                 last_cookie_renew = now
                 try:
-                    for account in app.state.pool.accounts:
-                        await account.http.session_info()
-                    app.state.last_renewal_at = now
-                    log.info("keepalive: successfully renewed 48h/30d muse.ai session cookies")
-                except Exception as exc:  # noqa: BLE001
+                    renewed = await app.state.pool.renew_cookies()
+                except Exception as exc:  # noqa: BLE001 - never kill the loop
                     log.warning("keepalive cookie renewal failed: %s", exc)
+                else:
+                    if renewed:
+                        app.state.last_renewal_at = now
+                        log.info(
+                            "keepalive: renewed muse.ai session cookies for %d account(s)",
+                            renewed,
+                        )
+                    else:
+                        log.warning("keepalive: no account could renew its cookies")
 
             idle_threshold = settings.idle_sleep_seconds
             if idle_threshold > 0:
@@ -529,7 +603,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         header = request.headers.get("authorization") or ""
         token = header[7:].strip() if header.lower().startswith("bearer ") else ""
-        if token != settings.api_key:
+        # Constant-time compare: a plain != leaks the key prefix to timing probes.
+        if not hmac.compare_digest(token, settings.api_key):
             raise ApiError("invalid API key", status=401, type_="authentication_error")
 
     def key_for(request: Request) -> str:
@@ -571,13 +646,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             code="muse_gateway",
         )
 
+    @app.exception_handler(PoolExhausted)
+    async def _pool_exhausted(_: Request, exc: PoolExhausted):
+        return error_response(
+            str(exc),
+            status=503,
+            type_="unavailable_error",
+            code="muse_unavailable",
+        )
+
     # ------------------------------------------------------------------ misc
 
     @app.get("/")
     async def index():
         return {
             "name": "muse2api-http",
-            "version": "0.1.0",
+            "version": __version__,
             "mode": "noise-http (no browser)",
             "endpoints": [
                 "/v1/models", "/v1/chat/completions", "/v1/responses",
@@ -649,28 +733,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             body = await request.json()
         except Exception:
-            raise ApiError("invalid JSON body")
-        messages = body.get("messages")
-        if not isinstance(messages, list) or not messages:
-            raise ApiError("messages must be a non-empty array")
+            raise ApiError("invalid JSON body") from None
+        messages = require_messages(body.get("messages"))
         model = openai_model(body.get("model"), settings.model)
         stream = body.get("stream") is True
 
         key = key_for(request)
         state = app.state.chat.sessions.get(key)
-        images = await latest_user_images(messages)
-        if last_user_text(messages):
-            prompt = build_prompt(messages, state)
-        elif images:
-            system_text = "\n\n".join(
-                content_text(m.get("content")).strip()
-                for m in messages if str(m.get("role")) == "system"
-                and content_text(m.get("content")).strip()
-            )
-            fallback = "user: Describe the attached image."
-            prompt = f"System: {system_text}\n\n{fallback}" if system_text else fallback
-        else:
-            raise ApiError("no non-empty user message")
+        prompt, images = await conversation_prompt(messages, state)
         prompt = tool_prompt(body, prompt)
         bridge_active = tools_active(body)
 
@@ -678,13 +748,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = await _chat_once(
                 request, prompt, settings.chat_timeout, items=images or None
             )
-            state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
-            state.system_hash = hashlib.sha256(
-                "\n\n".join(content_text(m.get("content")).strip()
-                            for m in messages if str(m.get("role")) == "system").encode()
-            ).hexdigest()[:16]
-            state.last_system_sent = True
-            app.state.chat.sessions._save()
+            record_turn(state, messages)
+            app.state.chat.sessions.save()
             message: dict[str, Any] = {"role": "assistant", "content": result.text}
             finish_reason = "stop"
             if bridge_active:
@@ -722,13 +787,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         request, prompt, settings.chat_timeout,
                         None if bridge_active else push, items=images or None,
                     )
-                    state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
-                    state.system_hash = hashlib.sha256(
-                        "\n\n".join(content_text(m.get("content")).strip()
-                                    for m in messages if str(m.get("role")) == "system").encode()
-                    ).hexdigest()[:16]
-                    state.last_system_sent = True
-                    app.state.chat.sessions._save()
+                    record_turn(state, messages)
+                    app.state.chat.sessions.save()
                     await queue.put(("done", result))
                 except Exception as exc:  # noqa: BLE001
                     await queue.put(("error", exc))
@@ -826,7 +886,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             body = await request.json()
         except Exception:
-            raise ApiError("invalid JSON body")
+            raise ApiError("invalid JSON body") from None
         raw_input = body.get("input")
         messages: list[dict] = []
         if isinstance(raw_input, str):
@@ -876,19 +936,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stream = body.get("stream") is True
         key = key_for(request)
         state = app.state.chat.sessions.get(key)
-        images = await latest_user_images(messages)
-        if last_user_text(messages):
-            prompt = build_prompt(messages, state)
-        elif images:
-            system_text = "\n\n".join(
-                content_text(m.get("content")).strip()
-                for m in messages if str(m.get("role")) == "system"
-                and content_text(m.get("content")).strip()
-            )
-            fallback = "user: Describe the attached image."
-            prompt = f"System: {system_text}\n\n{fallback}" if system_text else fallback
-        else:
-            raise ApiError("input must contain a non-empty user message")
+        prompt, images = await conversation_prompt(
+            messages, state, empty_message="input must contain a non-empty user message"
+        )
         prompt = tool_prompt(body, prompt)
         bridge_active = tools_active(body)
 
@@ -896,13 +946,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = await _chat_once(
                 request, prompt, settings.chat_timeout, items=images or None
             )
-            state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
-            state.system_hash = hashlib.sha256(
-                "\n\n".join(content_text(m.get("content")).strip()
-                            for m in messages if str(m.get("role")) == "system").encode()
-            ).hexdigest()[:16]
-            state.last_system_sent = True
-            app.state.chat.sessions._save()
+            record_turn(state, messages)
+            app.state.chat.sessions.save()
             text = result.text
             tool_calls = None
             if bridge_active:
@@ -932,13 +977,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         request, prompt, settings.chat_timeout,
                         None if bridge_active else push, items=images or None,
                     )
-                    state.last_user_count = sum(1 for m in messages if str(m.get("role")) == "user")
-                    state.system_hash = hashlib.sha256(
-                        "\n\n".join(content_text(m.get("content")).strip()
-                                    for m in messages if str(m.get("role")) == "system").encode()
-                    ).hexdigest()[:16]
-                    state.last_system_sent = True
-                    app.state.chat.sessions._save()
+                    record_turn(state, messages)
+                    app.state.chat.sessions.save()
                     await queue.put(("done", result))
                 except Exception as exc:  # noqa: BLE001
                     await queue.put(("error", exc))
@@ -1116,13 +1156,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "Edit/transform the attached reference image according to this request. "
                 "Use your image editing tool now, do not ask questions.\n\n" + prompt
             )
-            item = {"type": "image"}
-            if reference_image.startswith("data:"):
-                item["data_base64"] = reference_image.split(",", 1)[-1]
-                if ";" in reference_image.split(",", 1)[0]:
-                    item["mime_type"] = reference_image.split(":", 1)[1].split(";", 1)[0]
-            else:
-                item["data_base64"] = reference_image
+            item = await reference_image_item(reference_image)
+            if item is None:
+                raise ApiError("reference image is empty", code="invalid_image")
             items = [item, {"type": "text", "text": instruction}]
         async with app.state.sem:
             result = await app.state.chat.run_with_media(
@@ -1164,11 +1200,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             body = await request.json()
         except Exception:
-            raise ApiError("invalid JSON body")
+            raise ApiError("invalid JSON body") from None
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ApiError("prompt is required")
-        n = int(body.get("n") or 1)
+        n = int_field(body, "n", default=1, minimum=1, maximum=10)
         size = str(body.get("size") or "1024x1024")
         response_format = str(body.get("response_format") or "url")
         reference_image = body.get("reference_image")
@@ -1190,9 +1226,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         n: int = Form(1),
     ):
         check_auth(request)
-        raw = await image.read()
+        raw = await image.read(MAX_MEDIA_BYTES + 1)
         if not raw:
             raise ApiError("image is empty")
+        if len(raw) > MAX_MEDIA_BYTES:
+            raise ApiError(
+                f"image exceeds {media_limit_label()}",
+                status=413,
+                code="invalid_image",
+            )
         mime = image.content_type or mimetypes.guess_type(image.filename or "")[0] or "image/png"
         item = {
             "type": "image",
@@ -1285,7 +1327,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     os.environ.get("MUSE_VIDEO_BLOCK_SECONDS", "21600")
                 )
                 save_video_block(app.state.video_block_file, app.state.video_block_until)
-        app.state.tasks._save()
+        app.state.tasks.save()
 
     @app.post("/v1/videos")
     async def create_video(request: Request):
@@ -1293,7 +1335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             body = await request.json()
         except Exception:
-            raise ApiError("invalid JSON body")
+            raise ApiError("invalid JSON body") from None
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ApiError("prompt is required")
@@ -1304,7 +1346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 type_="upstream_error",
                 code="video_unavailable_region",
             )
-        duration = int(body.get("duration") or body.get("seconds") or 5)
+        duration = int_field(body, "duration", "seconds", default=5, minimum=1, maximum=60)
         size = str(body.get("size") or body.get("aspect_ratio") or "16:9")
         reference = await first_video_reference(body)
         reference_items = [reference] if reference else []
@@ -1334,11 +1376,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             body = await request.json()
         except Exception:
-            raise ApiError("invalid JSON body")
+            raise ApiError("invalid JSON body") from None
         prompt = body.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ApiError("prompt is required")
-        n = int(body.get("n") or 1)
+        n = int_field(body, "n", default=1, minimum=1, maximum=10)
         size = str(body.get("size") or "1024x1024")
         response_format = str(body.get("response_format") or "url")
         model = openai_model(body.get("model"), settings.model)
@@ -1355,7 +1397,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.image_tasks[task["id"]] = task
         if key:
             app.state.image_tasks[key] = task
-        app.state.tasks._save()
+        app.state.tasks.save()
         async def _run():
             task["status"] = "running"
             task["progress"] = 5
@@ -1366,11 +1408,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task["status"] = "succeeded"
                 task["progress"] = 100
                 task["result"] = result
-                app.state.tasks._save()
+                app.state.tasks.save()
             except Exception as exc:  # noqa: BLE001
                 task["status"] = "failed"
                 task["error"] = str(exc)
-                app.state.tasks._save()
+                app.state.tasks.save()
         asyncio.create_task(_run())
         return {"id": task["id"], "object": "image_task", "status": "queued",
                 "created_at": task["created_at"]}

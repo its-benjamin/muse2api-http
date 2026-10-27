@@ -14,8 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source
 COPY muse2api/ ./muse2api/
 
-# Create state directory
-RUN mkdir -p /app/.muse-state /app/data/media
+# Run unprivileged: the cache/state directories are the only writable paths.
+RUN useradd --create-home --uid 10001 muse \
+    && mkdir -p /app/.muse-state /app/data/media \
+    && chown -R muse:muse /app
+USER muse
 
 EXPOSE 8130
 
