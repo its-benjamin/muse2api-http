@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import __version__
 from .approvals import POLICIES as APPROVAL_POLICIES
 from .approvals import handle_pending
 from .config import Settings
@@ -609,7 +608,7 @@ class ChatService:
                 self.protocol.route("nodes.register").path,
                 {
                     "node_id": node_id,
-                    "display_name": "muse2api-http",
+                    "display_name": "Web",
                     "platform": "web",
                     "commands_v2": {"ping": {"description": "Connection liveness check"}},
                 },
@@ -626,8 +625,8 @@ class ChatService:
                 {
                     "client_id": client_id,
                     "platform": "web",
-                    "display_name": "muse2api-http",
-                    "version": __version__,
+                    "display_name": "Muse Web",
+                    "version": "0.0.0",
                     "capabilities": {
                         "data_sources": {},
                         "device_commands": {},

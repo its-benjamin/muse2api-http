@@ -220,7 +220,7 @@ async def submit(
     record: dict,
     decision: str | None,
     *,
-    reason: str = "muse2api HTTP client auto-approval",
+    reason: str | None = None,
     timeout: float = 20.0,
 ) -> bool:
     """Submit one decision over the existing Noise connection."""
@@ -230,8 +230,9 @@ async def submit(
     payload: dict[str, Any] = {
         "approval_id": ident,
         "decision": decision,
-        "reason": reason,
     }
+    if reason:
+        payload["reason"] = reason
     scope = decision_scope(record, decision)
     if scope:
         # The web client sends both keys; newer daemons read the second one.
@@ -260,7 +261,7 @@ async def decide(
     record: dict,
     policy: str,
     *,
-    reason: str = "muse2api HTTP client auto-approval",
+    reason: str | None = None,
     timeout: float = 20.0,
 ) -> bool:
     """Submit one decision over the existing Noise connection."""

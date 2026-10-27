@@ -43,11 +43,11 @@ log = logging.getLogger("muse2api.gateway")
 
 CHROME_BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 )
 FIREFOX_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) "
-    "Gecko/20100101 Firefox/158.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) "
+    "Gecko/20100101 Firefox/136.0"
 )
 BROWSER_UA = CHROME_BROWSER_UA
 
@@ -487,7 +487,7 @@ class HatchConnection:
                     return RpcResponse(stream.status, stream.headers, bytes(stream.body))
         finally:
             if not stream._done:
-                await self._send_reset(stream.id, "cancelled")
+                await self._send_reset(stream.id, "client aborted")
             self._drop_stream(stream.id)
 
     async def send(

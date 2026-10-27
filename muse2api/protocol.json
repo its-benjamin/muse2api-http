@@ -25,13 +25,11 @@
     },
     "chat.stream": {
       "httpMethod": "POST",
-      "path": "/chat/stream",
-      "streamMode": "subscription"
+      "path": "/chat/stream"
     },
     "chat.subscribe": {
       "httpMethod": "POST",
-      "path": "/chat/subscribe",
-      "streamMode": "subscription"
+      "path": "/chat/subscribe"
     },
     "chat.history": {
       "httpMethod": "GET",
@@ -121,18 +119,15 @@
     },
     "shopping.product_details": {
       "httpMethod": "GET",
-      "path": "/api/shopping",
-      "service": "daemon"
+      "path": "/api/shopping"
     },
     "shopping.cart": {
       "httpMethod": "GET",
-      "path": "/api/shopping/cart",
-      "service": "daemon"
+      "path": "/api/shopping/cart"
     },
     "shopping.events": {
       "httpMethod": "POST",
-      "path": "/api/shopping/events",
-      "service": "daemon"
+      "path": "/api/shopping/events"
     },
     "hotels.results": {
       "httpMethod": "GET",
@@ -320,13 +315,11 @@
     },
     "search.debug_overrides.get": {
       "httpMethod": "GET",
-      "path": "/api/search/debug-overrides",
-      "service": "sentinel"
+      "path": "/api/search/debug-overrides"
     },
     "search.debug_overrides.set": {
       "httpMethod": "PATCH",
-      "path": "/api/search/debug-overrides",
-      "service": "sentinel"
+      "path": "/api/search/debug-overrides"
     },
     "egress.approvals": {
       "httpMethod": "GET",
@@ -373,6 +366,1135 @@
     "tasks.delete": {
       "httpMethod": "DELETE",
       "path": "/api/tasks/{job_id}"
+    },
+    "email.mailbox.setup.end": {
+      "httpMethod": "POST",
+      "path": "/api/email/mailbox/setup/end",
+      "service": "daemon"
+    },
+    "voice.active_voice.save": {
+      "httpMethod": "POST",
+      "path": "/api/voice/active-voice"
+    },
+    "professional_consent.resume": {
+      "httpMethod": "POST",
+      "path": "/api/professional-consent/resume"
+    },
+    "chat.mark_seen": {
+      "httpMethod": "POST",
+      "path": "/api/chat/{thread_id}/seen"
+    },
+    "chat.sxs.select": {
+      "httpMethod": "POST",
+      "path": "/api/chat/sxs/select"
+    },
+    "activity.list": {
+      "httpMethod": "GET",
+      "path": "/activity"
+    },
+    "activity.get": {
+      "httpMethod": "GET",
+      "path": "/activity/{id}"
+    },
+    "sessions.get": {
+      "httpMethod": "GET",
+      "path": "/api/session/list/{id}"
+    },
+    "skills.list": {
+      "httpMethod": "GET",
+      "path": "/skills"
+    },
+    "skills.disconnect": {
+      "httpMethod": "POST",
+      "path": "/skills/disconnect"
+    },
+    "skills.set_disabled": {
+      "httpMethod": "POST",
+      "path": "/skills/set-disabled"
+    },
+    "subagents.list": {
+      "httpMethod": "GET",
+      "path": "/subagents"
+    },
+    "subagents.status": {
+      "httpMethod": "GET",
+      "path": "/subagents/status"
+    },
+    "config.get": {
+      "httpMethod": "GET",
+      "path": "/config"
+    },
+    "config.update": {
+      "httpMethod": "PATCH",
+      "path": "/config"
+    },
+    "vm.health": {
+      "httpMethod": "GET",
+      "path": "/health"
+    },
+    "bug_report_logs.create": {
+      "httpMethod": "POST",
+      "path": "/api/debug/bug-report-logs"
+    },
+    "bug_report_logs.download": {
+      "httpMethod": "GET",
+      "path": "/api/debug/bug-report-logs/{file_id}"
+    },
+    "home_link_bug_reports.collect": {
+      "httpMethod": "POST",
+      "path": "/api/debug/home-link-bug-reports"
+    },
+    "dyi.export": {
+      "httpMethod": "POST",
+      "path": "/api/dyi/export",
+      "service": "daemon"
+    },
+    "product_improvements.get": {
+      "httpMethod": "GET",
+      "path": "/api/product-improvements",
+      "service": "daemon"
+    },
+    "product_improvements.set": {
+      "httpMethod": "POST",
+      "path": "/api/product-improvements",
+      "service": "daemon"
+    },
+    "invite.badge.get": {
+      "httpMethod": "GET",
+      "path": "/api/invite/badge",
+      "service": "daemon"
+    },
+    "invite.badge.seen": {
+      "httpMethod": "POST",
+      "path": "/api/invite/badge/seen",
+      "service": "daemon"
+    },
+    "grants.list": {
+      "httpMethod": "GET",
+      "path": "/grants",
+      "service": "daemon"
+    },
+    "vm.enrollment_health": {
+      "httpMethod": "GET",
+      "path": "/health/enrollment"
+    },
+    "vault.luks_status": {
+      "httpMethod": "GET",
+      "path": "/luks/status",
+      "service": "vault"
+    },
+    "messenger.fb-check": {
+      "httpMethod": "GET",
+      "path": "/api/messenger/fb-check"
+    },
+    "messenger.pin_status": {
+      "httpMethod": "GET",
+      "path": "/api/messenger_companion/pin-status"
+    },
+    "messenger_companion.unlock": {
+      "httpMethod": "POST",
+      "path": "/api/messenger_companion/unlock"
+    },
+    "messenger-read.unlock": {
+      "httpMethod": "POST",
+      "path": "/api/messenger-read/unlock"
+    },
+    "foa.accounts": {
+      "httpMethod": "GET",
+      "path": "/api/foa/accounts"
+    },
+    "connectors.accounts": {
+      "httpMethod": "GET",
+      "path": "/connectors/{id}/accounts"
+    },
+    "connectors.accounts_unlink": {
+      "httpMethod": "POST",
+      "path": "/connectors/{id}/accounts/{account_id}/unlink"
+    },
+    "connectors.accounts_link": {
+      "httpMethod": "POST",
+      "path": "/connectors/{id}/accounts/link"
+    },
+    "foa_auth.callback": {
+      "httpMethod": "POST",
+      "path": "/api/foa_auth/callback",
+      "service": "authd"
+    },
+    "channels.status": {
+      "httpMethod": "GET",
+      "path": "/channels/status"
+    },
+    "channels.link": {
+      "httpMethod": "POST",
+      "path": "/channels/link"
+    },
+    "channels.unlink": {
+      "httpMethod": "POST",
+      "path": "/channels/unlink"
+    },
+    "shared_agents.list": {
+      "httpMethod": "GET",
+      "path": "/shared-agents"
+    },
+    "shared_agents.capabilities": {
+      "httpMethod": "GET",
+      "path": "/shared-agents/capabilities"
+    },
+    "shared_agents.detail": {
+      "httpMethod": "GET",
+      "path": "/shared-agents/{shared_agent_id}"
+    },
+    "shared_agents.delete": {
+      "httpMethod": "DELETE",
+      "path": "/shared-agents/{shared_agent_id}"
+    },
+    "shared_agents.state.update": {
+      "httpMethod": "PATCH",
+      "path": "/shared-agents/{shared_agent_id}/state"
+    },
+    "shared_agents.identity.update": {
+      "httpMethod": "PATCH",
+      "path": "/shared-agents/{shared_agent_id}/identity"
+    },
+    "shared_agents.definition": {
+      "httpMethod": "GET",
+      "path": "/shared-agents/{shared_agent_id}/definition"
+    },
+    "shared_agents.create": {
+      "httpMethod": "POST",
+      "path": "/shared-agents/create-idempotent"
+    },
+    "shared_agents.definition.update": {
+      "httpMethod": "PATCH",
+      "path": "/shared-agents/{shared_agent_id}/definition"
+    },
+    "shared_agents.shares.list": {
+      "httpMethod": "GET",
+      "path": "/shared-agents/{shared_agent_id}/shares"
+    },
+    "shared_agents.shares.create": {
+      "httpMethod": "POST",
+      "path": "/shared-agents/{shared_agent_id}/shares"
+    },
+    "shared_agents.shares.conversation": {
+      "httpMethod": "GET",
+      "path": "/shared-agents/{shared_agent_id}/shares/{share_id}/conversation"
+    },
+    "shared_agents.shares.revoke": {
+      "httpMethod": "POST",
+      "path": "/shared-agents/{shared_agent_id}/shares/{share_id}/revoke"
+    },
+    "shared_agents.remote.open": {
+      "httpMethod": "POST",
+      "path": "/api/shared-agents/remote/open"
+    },
+    "shared_agents.remote.send": {
+      "httpMethod": "POST",
+      "path": "/api/shared-agents/remote/send"
+    },
+    "memory.search": {
+      "httpMethod": "POST",
+      "path": "/memory/search"
+    },
+    "memory.get": {
+      "httpMethod": "POST",
+      "path": "/memory/get"
+    },
+    "memory.consolidate": {
+      "httpMethod": "POST",
+      "path": "/memory/consolidate"
+    },
+    "memory.reindex": {
+      "httpMethod": "POST",
+      "path": "/memory/reindex"
+    },
+    "bootstrap.reset": {
+      "httpMethod": "POST",
+      "path": "/bootstrap/reset"
+    },
+    "subscription.callback": {
+      "httpMethod": "POST",
+      "path": "/subscription/callback"
+    },
+    "subscription.redeem_complimentary": {
+      "httpMethod": "POST",
+      "path": "/subscription/redeem-complimentary"
+    },
+    "reactions.toggle": {
+      "httpMethod": "POST",
+      "path": "/reactions/toggle"
+    },
+    "api_key_auth.callback": {
+      "httpMethod": "POST",
+      "path": "/api_key_auth/callback",
+      "service": "authd"
+    },
+    "custom_connectors.register": {
+      "httpMethod": "POST",
+      "path": "/v1/custom-connectors/register",
+      "service": "authd"
+    },
+    "custom_connectors.list": {
+      "httpMethod": "POST",
+      "path": "/v1/custom-connectors/list",
+      "service": "authd"
+    },
+    "custom_connectors.delete": {
+      "httpMethod": "POST",
+      "path": "/v1/custom-connectors/delete",
+      "service": "authd"
+    },
+    "connectors.list": {
+      "httpMethod": "GET",
+      "path": "/connectors"
+    },
+    "connectors.homepage": {
+      "httpMethod": "GET",
+      "path": "/connectors/homepage"
+    },
+    "connectors.get": {
+      "httpMethod": "GET",
+      "path": "/connectors/{id}"
+    },
+    "connectors.connect_info": {
+      "httpMethod": "GET",
+      "path": "/connectors/{id}/connect/info"
+    },
+    "connectors.connect": {
+      "httpMethod": "POST",
+      "path": "/connectors/{id}/connect"
+    },
+    "connectors.permissions": {
+      "httpMethod": "GET",
+      "path": "/connectors/{id}/permissions"
+    },
+    "connectors.scope_link": {
+      "httpMethod": "POST",
+      "path": "/connectors/{id}/scopes/{method}/link"
+    },
+    "connectors.disconnect": {
+      "httpMethod": "POST",
+      "path": "/connectors/{id}/disconnect"
+    },
+    "consent_auth.callback": {
+      "httpMethod": "POST",
+      "path": "/consent_auth/callback"
+    },
+    "username_password_auth.callback": {
+      "httpMethod": "POST",
+      "path": "/username_password_auth/callback",
+      "service": "authd"
+    },
+    "whatsapp.login": {
+      "httpMethod": "POST",
+      "path": "/whatsapp/login"
+    },
+    "whatsapp.install": {
+      "httpMethod": "POST",
+      "path": "/whatsapp/install"
+    },
+    "whatsapp_companion.link": {
+      "httpMethod": "POST",
+      "path": "/whatsapp_companion/link"
+    },
+    "whatsapp_companion.status": {
+      "httpMethod": "GET",
+      "path": "/whatsapp_companion/status"
+    },
+    "browser_stream.attach": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/websockify?mode=attach"
+    },
+    "browser_activity.snapshot": {
+      "httpMethod": "GET",
+      "path": "/api/browser-activity/actions/{action_id}/snapshot"
+    },
+    "voice.dictation": {
+      "httpMethod": "POST",
+      "path": "/api/voice/dictation?sample_rate_hz={sample_rate_hz}"
+    },
+    "browser_task.get": {
+      "httpMethod": "GET",
+      "path": "/api/browser-task/{task_id}"
+    },
+    "browser_task.takeover": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/takeover"
+    },
+    "browser_task.present": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/present"
+    },
+    "browser_task.viewer": {
+      "httpMethod": "PATCH",
+      "path": "/api/browser-task/{task_id}/viewer",
+      "service": "daemon"
+    },
+    "browser_task.heartbeat": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/heartbeat"
+    },
+    "browser_task.close": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/close"
+    },
+    "browser_task.release": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/release"
+    },
+    "browser_task.stop": {
+      "httpMethod": "POST",
+      "path": "/api/browser-task/{task_id}/stop"
+    },
+    "browser.lease": {
+      "httpMethod": "POST",
+      "path": "/api/browser/lease"
+    },
+    "computer.context": {
+      "httpMethod": "GET",
+      "path": "/api/computer/context"
+    },
+    "computer.preview": {
+      "httpMethod": "GET",
+      "path": "/api/computer/previews/{task_id}/{sha256}"
+    },
+    "browser.local_testing.get": {
+      "httpMethod": "GET",
+      "path": "/api/browser/local-testing"
+    },
+    "browser.local_testing.set": {
+      "httpMethod": "PATCH",
+      "path": "/api/browser/local-testing"
+    },
+    "identity": {
+      "httpMethod": "GET",
+      "path": "/identity"
+    },
+    "chat.themes": {
+      "httpMethod": "GET",
+      "path": "/api/chat/themes"
+    },
+    "chat.themes.set": {
+      "httpMethod": "POST",
+      "path": "/api/chat/themes/set"
+    },
+    "iframe.call": {
+      "httpMethod": "POST",
+      "path": "/call"
+    },
+    "voice.calls.join": {
+      "httpMethod": "POST",
+      "path": "/voice/calls/join"
+    },
+    "artifacts.share": {
+      "httpMethod": "POST",
+      "path": "/artifacts/share"
+    },
+    "artifacts.remove": {
+      "httpMethod": "POST",
+      "path": "/artifacts/remove"
+    },
+    "artifacts.fetch_url": {
+      "httpMethod": "GET",
+      "path": "/artifacts/fetch_url"
+    },
+    "artifacts.list": {
+      "httpMethod": "GET",
+      "path": "/api/artifacts"
+    },
+    "artifacts.pin": {
+      "httpMethod": "POST",
+      "path": "/api/artifacts/pin"
+    },
+    "artifacts.slides.rebuild": {
+      "httpMethod": "POST",
+      "path": "/api/artifacts/slides/rebuild"
+    },
+    "onboarding.variants": {
+      "httpMethod": "GET",
+      "path": "/api/onboarding/variants"
+    },
+    "onboarding.pages.start": {
+      "httpMethod": "POST",
+      "path": "/onboarding/pages"
+    },
+    "onboarding.complete": {
+      "httpMethod": "POST",
+      "path": "/onboarding/complete"
+    },
+    "onboarding.reset": {
+      "httpMethod": "POST",
+      "path": "/onboarding/reset"
+    },
+    "onboarding.tasks": {
+      "httpMethod": "GET",
+      "path": "/onboarding/tasks"
+    },
+    "onboarding.identity": {
+      "httpMethod": "GET",
+      "path": "/onboarding/identity"
+    },
+    "onboarding.identity.set": {
+      "httpMethod": "POST",
+      "path": "/onboarding/identity"
+    },
+    "goal_prompt": {
+      "httpMethod": "POST",
+      "path": "/goal_prompt"
+    },
+    "goals.list": {
+      "httpMethod": "GET",
+      "path": "/goals"
+    },
+    "goals.get": {
+      "httpMethod": "GET",
+      "path": "/goals/{id}"
+    },
+    "goals.update": {
+      "httpMethod": "PATCH",
+      "path": "/goals/{id}"
+    },
+    "goals.reorder": {
+      "httpMethod": "PATCH",
+      "path": "/goals/{id}/order"
+    },
+    "goals.delete": {
+      "httpMethod": "DELETE",
+      "path": "/goals/{id}"
+    },
+    "podcasts.episodes.list": {
+      "httpMethod": "GET",
+      "path": "/api/podcasts/episodes"
+    },
+    "podcasts.feed.get": {
+      "httpMethod": "GET",
+      "path": "/api/podcasts/feed"
+    },
+    "podcasts.feeds.list": {
+      "httpMethod": "GET",
+      "path": "/api/podcasts/feeds"
+    },
+    "podcasts.episode.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/podcasts/episodes/{slug}"
+    },
+    "goals.suggestions.decide": {
+      "httpMethod": "POST",
+      "path": "/goals/{goal_id}/suggestions/{suggestion_id}/decision"
+    },
+    "api.idea-cards.list": {
+      "httpMethod": "GET",
+      "path": "/api/idea-cards"
+    },
+    "api.ideas.reset": {
+      "httpMethod": "POST",
+      "path": "/api/ideas/reset"
+    },
+    "api.ideas.engagement": {
+      "httpMethod": "POST",
+      "path": "/api/ideas/{id}/engagement"
+    },
+    "api.ideas.feedback": {
+      "httpMethod": "POST",
+      "path": "/api/ideas/{id}/feedback"
+    },
+    "api.idea-cards.detail": {
+      "httpMethod": "GET",
+      "path": "/api/idea-cards/{ideaCardId}"
+    },
+    "api.idea-cards.execute": {
+      "httpMethod": "POST",
+      "path": "/api/idea-cards/{ideaCardId}/execute"
+    },
+    "api.idea-cards.share": {
+      "httpMethod": "POST",
+      "path": "/api/idea-cards/{ideaCardId}/share"
+    },
+    "api.idea-cards.debug": {
+      "httpMethod": "GET",
+      "path": "/api/idea-cards/{ideaCardId}/debug"
+    },
+    "ads.details": {
+      "httpMethod": "GET",
+      "path": "/api/ads/details"
+    },
+    "feed.list": {
+      "httpMethod": "GET",
+      "path": "/api/feed"
+    },
+    "feed.infinite": {
+      "httpMethod": "GET",
+      "path": "/api/feed/infinite"
+    },
+    "feed.status": {
+      "httpMethod": "GET",
+      "path": "/api/feed/status"
+    },
+    "feed.search": {
+      "httpMethod": "GET",
+      "path": "/api/feed/search"
+    },
+    "feed.unit": {
+      "httpMethod": "GET",
+      "path": "/api/feed/units/{unit_id}"
+    },
+    "feed.unit.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/feed/units/{unit_id}"
+    },
+    "feed.unit.reaction": {
+      "httpMethod": "POST",
+      "path": "/api/feed/units/{unit_id}/reaction"
+    },
+    "feed.unit.tap": {
+      "httpMethod": "POST",
+      "path": "/api/feed/units/{unit_id}/tap"
+    },
+    "feed.units.seen": {
+      "httpMethod": "POST",
+      "path": "/api/feed/units/seen"
+    },
+    "feed.reorder": {
+      "httpMethod": "POST",
+      "path": "/api/feed/reorder"
+    },
+    "feed.regenerate": {
+      "httpMethod": "POST",
+      "path": "/api/feed/regenerate"
+    },
+    "feed.prompt.get": {
+      "httpMethod": "GET",
+      "path": "/api/feed/prompt"
+    },
+    "feed.prompt.update": {
+      "httpMethod": "PATCH",
+      "path": "/api/feed/prompt"
+    },
+    "feed.prompts.delete": {
+      "httpMethod": "DELETE",
+      "path": "/api/feed/prompts/{prompt_id}"
+    },
+    "feed.social_source_icon": {
+      "httpMethod": "GET",
+      "path": "/api/feed/social-source-icon/{source}"
+    },
+    "feed.unit.media": {
+      "httpMethod": "GET",
+      "path": "/api/feed/units/{unit_id}/media/{handle}"
+    },
+    "redteam.mocks.apply": {
+      "httpMethod": "POST",
+      "path": "/redteam/mocks"
+    },
+    "redteam.mocks.clear": {
+      "httpMethod": "DELETE",
+      "path": "/redteam/mocks"
+    },
+    "redteam.mocks.get": {
+      "httpMethod": "GET",
+      "path": "/redteam/mocks"
+    },
+    "redteam.sidecar.tail": {
+      "httpMethod": "GET",
+      "path": "/redteam/mocks/sidecar"
+    },
+    "check": {
+      "httpMethod": "GET",
+      "path": "/check"
+    },
+    "session.start": {
+      "httpMethod": "POST",
+      "path": "/session/start"
+    },
+    "session.archive": {
+      "httpMethod": "POST",
+      "path": "/session/archive"
+    },
+    "session.unarchive": {
+      "httpMethod": "POST",
+      "path": "/session/unarchive"
+    },
+    "session.pin": {
+      "httpMethod": "POST",
+      "path": "/session/pin"
+    },
+    "session.unpin": {
+      "httpMethod": "POST",
+      "path": "/session/unpin"
+    },
+    "session.rename": {
+      "httpMethod": "POST",
+      "path": "/session/rename"
+    },
+    "session.delete": {
+      "httpMethod": "POST",
+      "path": "/session/delete"
+    },
+    "chat.unread_count": {
+      "httpMethod": "GET",
+      "path": "/chat/unread-count"
+    },
+    "chat.poke": {
+      "httpMethod": "POST",
+      "path": "/chat/poke"
+    },
+    "onboarding.state": {
+      "httpMethod": "GET",
+      "path": "/onboarding"
+    },
+    "onboarding.questions": {
+      "httpMethod": "GET",
+      "path": "/onboarding/questions"
+    },
+    "spaces.list": {
+      "httpMethod": "GET",
+      "path": "/spaces/v2"
+    },
+    "spaces.delete": {
+      "httpMethod": "DELETE",
+      "path": "/spaces/v2/{slug}"
+    },
+    "spaces.saved.delete": {
+      "httpMethod": "DELETE",
+      "path": "/spaces/v2/{slug}?source=saved_space"
+    },
+    "spaces.save": {
+      "httpMethod": "POST",
+      "path": "/spaces/v2/{slug}/save"
+    },
+    "spaces.share.review": {
+      "httpMethod": "GET",
+      "path": "/spaces/share/{slug}/review"
+    },
+    "spaces.share": {
+      "httpMethod": "POST",
+      "path": "/spaces/share/{slug}"
+    },
+    "spaces.share.status": {
+      "httpMethod": "GET",
+      "path": "/spaces/share/{slug}"
+    },
+    "spaces.share.settings": {
+      "httpMethod": "GET",
+      "path": "/spaces/share/{slug}/settings"
+    },
+    "spaces.unshare": {
+      "httpMethod": "DELETE",
+      "path": "/spaces/share/{slug}"
+    },
+    "spaces.share.fix": {
+      "httpMethod": "POST",
+      "path": "/spaces/share/{slug}/fix"
+    },
+    "spaces.debug.summary": {
+      "httpMethod": "GET",
+      "path": "/spaces/{slug}/debug/summary"
+    },
+    "spaces.debug.invocations": {
+      "httpMethod": "GET",
+      "path": "/spaces/{slug}/debug/invocations"
+    },
+    "spaces.debug.invocation": {
+      "httpMethod": "GET",
+      "path": "/spaces/{slug}/debug/invocations/{invocation_id}"
+    },
+    "spaces.debug.log": {
+      "httpMethod": "GET",
+      "path": "/spaces/{slug}/debug/log"
+    },
+    "spaces.export_html": {
+      "httpMethod": "GET",
+      "path": "/spaces/{slug}/export.html"
+    },
+    "spaces.cvm.render": {
+      "httpMethod": "GET",
+      "path": "/spaces/cvm/{slug}/"
+    },
+    "spaces.cvm.get": {
+      "httpMethod": "GET",
+      "path": "/spaces/cvm/{slug}/{*subpath}"
+    },
+    "spaces.cvm.post": {
+      "httpMethod": "POST",
+      "path": "/spaces/cvm/{slug}/{*subpath}"
+    },
+    "fs.stats": {
+      "httpMethod": "POST",
+      "path": "/fs/stats"
+    },
+    "fs.list": {
+      "httpMethod": "POST",
+      "path": "/fs/list"
+    },
+    "fs.stat": {
+      "httpMethod": "POST",
+      "path": "/fs/stat"
+    },
+    "fs.read": {
+      "httpMethod": "POST",
+      "path": "/fs/read"
+    },
+    "fs.reads": {
+      "httpMethod": "POST",
+      "path": "/fs/reads"
+    },
+    "fs.write": {
+      "httpMethod": "POST",
+      "path": "/fs/write"
+    },
+    "fs.delete": {
+      "httpMethod": "POST",
+      "path": "/fs/delete"
+    },
+    "fs.rename": {
+      "httpMethod": "POST",
+      "path": "/fs/rename"
+    },
+    "fs.mkdir": {
+      "httpMethod": "POST",
+      "path": "/fs/mkdir"
+    },
+    "fs.library": {
+      "httpMethod": "POST",
+      "path": "/fs/library"
+    },
+    "fs.export": {
+      "httpMethod": "POST",
+      "path": "/fs/export"
+    },
+    "fs.raw": {
+      "httpMethod": "GET",
+      "path": "/fs/raw/{*path}"
+    },
+    "idea-cards.media": {
+      "httpMethod": "GET",
+      "path": "/api/idea-cards/media/{handle}"
+    },
+    "fs.search": {
+      "httpMethod": "POST",
+      "path": "/fs/search"
+    },
+    "git.log": {
+      "httpMethod": "POST",
+      "path": "/git/log"
+    },
+    "git.show_file": {
+      "httpMethod": "POST",
+      "path": "/git/show_file"
+    },
+    "nodes.invoke_result": {
+      "httpMethod": "POST",
+      "path": "/nodes/invoke-result"
+    },
+    "nodes.invoke_ack": {
+      "httpMethod": "POST",
+      "path": "/nodes/invoke-ack"
+    },
+    "nodes.sync": {
+      "httpMethod": "POST",
+      "path": "/nodes/sync"
+    },
+    "node.list": {
+      "httpMethod": "POST",
+      "path": "/api/nodes/list"
+    },
+    "node.register": {
+      "httpMethod": "POST",
+      "path": "/api/nodes/register"
+    },
+    "node.heartbeat": {
+      "httpMethod": "POST",
+      "path": "/api/nodes/heartbeat"
+    },
+    "node.unpair": {
+      "httpMethod": "POST",
+      "path": "/api/nodes/unpair"
+    },
+    "node.disconnect": {
+      "httpMethod": "POST",
+      "path": "/api/nodes/disconnect"
+    },
+    "pin.update": {
+      "httpMethod": "POST",
+      "path": "/api/pin-reminder/update"
+    },
+    "pin.reminder_confirm": {
+      "httpMethod": "POST",
+      "path": "/api/pin-reminder/confirm"
+    },
+    "wallet.get": {
+      "httpMethod": "GET",
+      "path": "/wallet"
+    },
+    "wallet.set": {
+      "httpMethod": "POST",
+      "path": "/wallet"
+    },
+    "egress.permissions": {
+      "httpMethod": "GET",
+      "path": "/permissions",
+      "service": "sentinel"
+    },
+    "permissions.settings": {
+      "httpMethod": "GET",
+      "path": "/permissions/settings",
+      "service": "sentinel"
+    },
+    "permissions.inventory": {
+      "httpMethod": "GET",
+      "path": "/permissions/inventory",
+      "service": "daemon"
+    },
+    "permissions.settings.update": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/settings",
+      "service": "sentinel"
+    },
+    "egress.permissions.hitl": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/hitl",
+      "service": "sentinel"
+    },
+    "egress.permissions.hitl.snooze.delete": {
+      "httpMethod": "DELETE",
+      "path": "/permissions/hitl/snooze",
+      "service": "sentinel"
+    },
+    "egress.permissions.tproxy": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/tproxy",
+      "service": "sentinel"
+    },
+    "egress.permissions.mitm": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/mitm",
+      "service": "sentinel"
+    },
+    "egress.permissions.sni_rejection": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/sni-rejection",
+      "service": "sentinel"
+    },
+    "egress.permissions.active": {
+      "httpMethod": "GET",
+      "path": "/permissions/active",
+      "service": "sentinel"
+    },
+    "egress.permissions.active.update": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/active",
+      "service": "sentinel"
+    },
+    "egress.permissions.scoped": {
+      "httpMethod": "GET",
+      "path": "/permissions/scopes/{scope_type}/{scope_id}",
+      "service": "sentinel"
+    },
+    "egress.permissions.scoped.update": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/scopes/{scope_type}/{scope_id}",
+      "service": "sentinel"
+    },
+    "egress.permissions.revoke": {
+      "httpMethod": "POST",
+      "path": "/permissions/revoke",
+      "service": "sentinel"
+    },
+    "egress.permissions.reset": {
+      "httpMethod": "POST",
+      "path": "/permissions/reset",
+      "service": "sentinel"
+    },
+    "egress.permissions.network_rules": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/network-rules",
+      "service": "sentinel"
+    },
+    "egress.permissions.connector": {
+      "httpMethod": "PATCH",
+      "path": "/permissions/connectors/{connector}",
+      "service": "sentinel"
+    },
+    "egress.permissions.connector.reset": {
+      "httpMethod": "DELETE",
+      "path": "/permissions/connectors/{connector}",
+      "service": "sentinel"
+    },
+    "chat.history_window": {
+      "httpMethod": "GET",
+      "path": "/chat/history-window"
+    },
+    "chat.cancel": {
+      "httpMethod": "POST",
+      "path": "/chat/cancel"
+    },
+    "chat.delete_turn": {
+      "httpMethod": "POST",
+      "path": "/api/chat/delete-turn"
+    },
+    "chat.message_get": {
+      "httpMethod": "GET",
+      "path": "/chat/message"
+    },
+    "chat.search": {
+      "httpMethod": "GET",
+      "path": "/chat/search"
+    },
+    "client.invoke.result": {
+      "httpMethod": "POST",
+      "path": "/client/invoke-result"
+    },
+    "model.set": {
+      "httpMethod": "POST",
+      "path": "/model"
+    },
+    "widgets.state.set": {
+      "httpMethod": "POST",
+      "path": "/widgets/state"
+    },
+    "widgets.state.patch": {
+      "httpMethod": "POST",
+      "path": "/widgets/state/patch"
+    },
+    "navigation.subscribe": {
+      "httpMethod": "POST",
+      "path": "/navigation/subscribe"
+    },
+    "navigation.recents.touch": {
+      "httpMethod": "POST",
+      "path": "/navigation/recents/touch"
+    },
+    "navigation.pinned.set": {
+      "httpMethod": "POST",
+      "path": "/navigation/pinned/set"
+    },
+    "chat.stream_events": {
+      "httpMethod": "POST",
+      "path": "/chat/stream-events"
+    },
+    "activity.subscribe": {
+      "httpMethod": "POST",
+      "path": "/activity/subscribe"
+    },
+    "fs.subscribe": {
+      "httpMethod": "POST",
+      "path": "/api/fs/subscribe"
+    },
+    "identity.subscribe": {
+      "httpMethod": "POST",
+      "path": "/identity/subscribe"
+    },
+    "spaces.subscribe": {
+      "httpMethod": "POST",
+      "path": "/spaces/subscribe"
+    },
+    "artifacts.subscribe": {
+      "httpMethod": "POST",
+      "path": "/api/artifacts/subscribe"
+    },
+    "tasks.subscribe": {
+      "httpMethod": "POST",
+      "path": "/tasks/subscribe"
+    },
+    "theme.subscribe": {
+      "httpMethod": "POST",
+      "path": "/themes/subscribe"
+    },
+    "computer.subscribe": {
+      "httpMethod": "POST",
+      "path": "/api/computer/subscribe"
+    },
+    "peers.status": {
+      "httpMethod": "GET",
+      "path": "/peers/status",
+      "service": "daemon"
+    },
+    "peers.list": {
+      "httpMethod": "GET",
+      "path": "/peers",
+      "service": "daemon"
+    },
+    "peers.invites.list": {
+      "httpMethod": "GET",
+      "path": "/peers/invites",
+      "service": "daemon"
+    },
+    "peers.disconnect": {
+      "httpMethod": "DELETE",
+      "path": "/peers/{muse_id}?relationship_generation_id={relationship_generation_id}&relationship_revision={relationship_revision}&relationship_started_at_ms={relationship_started_at_ms}&request_expires_at_ms={request_expires_at_ms}"
+    },
+    "peers.update": {
+      "httpMethod": "PATCH",
+      "path": "/peers/{muse_id}",
+      "service": "daemon"
+    },
+    "peers.reset_conversation": {
+      "httpMethod": "POST",
+      "path": "/peers/{muse_id}/reset_conversation",
+      "service": "daemon"
+    },
+    "peers.requests.list": {
+      "httpMethod": "GET",
+      "path": "/peers/requests",
+      "service": "daemon"
+    },
+    "peers.invites.create": {
+      "httpMethod": "POST",
+      "path": "/peers/invites",
+      "service": "daemon"
+    },
+    "peers.invites.accept": {
+      "httpMethod": "POST",
+      "path": "/peers/invites/accept",
+      "service": "daemon"
+    },
+    "peers.invites.open": {
+      "httpMethod": "POST",
+      "path": "/peers/invites/open",
+      "service": "daemon"
+    },
+    "peers.inbox.deliver": {
+      "httpMethod": "POST",
+      "path": "/peers/inbox/deliver",
+      "service": "daemon"
+    },
+    "peers.inbox.list": {
+      "httpMethod": "GET",
+      "path": "/peers/inbox",
+      "service": "daemon"
+    },
+    "peers.inbox.decline": {
+      "httpMethod": "POST",
+      "path": "/peers/inbox/decline",
+      "service": "daemon"
+    },
+    "peers.invites.revoke": {
+      "httpMethod": "DELETE",
+      "path": "/peers/invites/{invite_id}"
+    },
+    "peers.requests.sas": {
+      "httpMethod": "GET",
+      "path": "/peers/requests/{relationship_generation_id}/sas",
+      "service": "daemon"
+    },
+    "peers.requests.sas.confirm": {
+      "httpMethod": "POST",
+      "path": "/peers/requests/{relationship_generation_id}/sas/confirm",
+      "service": "daemon"
+    },
+    "peers.discretion.write": {
+      "httpMethod": "POST",
+      "path": "/fs/write"
+    },
+    "peers.photo": {
+      "httpMethod": "GET",
+      "path": "/peers/{muse_id}/photo/{sha256}",
+      "service": "daemon"
+    },
+    "peers.avatar": {
+      "httpMethod": "GET",
+      "path": "/peers/{muse_id}/avatar/{sha256}",
+      "service": "daemon"
     }
   },
   "generated_at": "2026-10-23T08:14:40.587793+00:00",
