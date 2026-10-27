@@ -58,6 +58,28 @@ from .tool_bridge import (
 
 log = logging.getLogger("muse2api.server")
 
+# Liveness probes arrive every 30s from the container healthcheck; logging each
+# one buries real traffic without adding signal.
+_HEALTH_PATHS = frozenset({"/healthz"})
+
+
+class _HealthProbeFilter(logging.Filter):
+    """Drop healthcheck requests from the uvicorn access log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3:
+            return str(args[2]) not in _HEALTH_PATHS
+        return True
+
+
+def _quiet_health_probes() -> None:
+    """Install the access-log filter once per process."""
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(entry, _HealthProbeFilter) for entry in access.filters):
+        access.addFilter(_HealthProbeFilter())
+
+
 _VIDEO_REGION_HINTS = (
     "not available for your account",
     "available for your account in your country or region",
@@ -484,11 +506,14 @@ def recover_interrupted_tasks(store: TaskStore) -> int:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    _quiet_health_probes()
     media_root = Path(settings.state_dir.parent) / "data" / "media"
     media = MediaStore(media_root, public_base=settings.public_base or "/v1/media")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # uvicorn applies its logging config after create_app(), so re-install.
+        _quiet_health_probes()
         settings.ensure_state_dir()
         protocol = ProtocolConfig.load()
         log.info("protocol: lb=%s ws=%s source=%s", protocol.lb_host,

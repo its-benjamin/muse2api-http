@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -111,3 +112,23 @@ def test_image_tasks_idempotency_across_restart(tmp_path: Path):
     assert body["reused"] is True
     assert body["id"] == task["id"]
     assert body["status"] == "succeeded"
+
+
+def test_health_probes_are_not_access_logged():
+    from muse2api.server import _HealthProbeFilter, _quiet_health_probes
+
+    _quiet_health_probes()
+    _quiet_health_probes()  # idempotent
+    filters = [entry for entry in logging.getLogger("uvicorn.access").filters
+               if isinstance(entry, _HealthProbeFilter)]
+    assert len(filters) == 1
+
+    def record(method: str, path: str) -> logging.LogRecord:
+        return logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 1,
+            '%s - "%s %s HTTP/%s" %d',
+            ("127.0.0.1:1234", method, path, "1.1", 200), None,
+        )
+
+    assert filters[0].filter(record("GET", "/healthz")) is False
+    assert filters[0].filter(record("GET", "/v1/models")) is True
