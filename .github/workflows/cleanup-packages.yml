@@ -1,0 +1,27 @@
+name: Cleanup old packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete untagged container package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'muse2api-http'
+          package-type: 'container'
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 0
+
+      - name: Delete specific old pre-v0.1.0 tags
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'muse2api-http'
+          package-type: 'container'
+          package-version-ids: '1451708965,1451547489,1451458715,1451415371,1453223408'
