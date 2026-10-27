@@ -196,3 +196,45 @@ def test_renew_cookies_marks_account_bad_without_fresh_export(tmp_path: Path):
 
     assert asyncio.run(pool.renew_cookies()) == 0
     assert pool.accounts[0].healthy is False
+
+
+def test_ensure_cookie_file_returns_true_if_valid_file_exists(tmp_path: Path):
+    from muse2api.cookies import ensure_cookie_file
+
+    jar_path = tmp_path / "cookies.txt"
+    write_jar(jar_path, "session_123")
+    assert ensure_cookie_file(jar_path) is True
+
+
+def test_ensure_cookie_file_non_interactive_returns_false(tmp_path: Path):
+    from muse2api.cookies import ensure_cookie_file
+
+    jar_path = tmp_path / "missing.txt"
+    assert ensure_cookie_file(jar_path, is_interactive=False) is False
+    assert not jar_path.exists()
+
+
+def test_ensure_cookie_file_interactive_prompts_and_saves(tmp_path: Path, monkeypatch):
+    import builtins
+
+    from muse2api.cookies import ensure_cookie_file, parse_cookie_file
+
+    jar_path = tmp_path / "new_cookies.txt"
+    monkeypatch.setattr(builtins, "input", lambda _: "s%3Amy_secret_token")
+
+    assert ensure_cookie_file(jar_path, is_interactive=True) is True
+    assert jar_path.is_file()
+    jar = parse_cookie_file(jar_path)
+    assert jar["hatch_sess"] == "s%3Amy_secret_token"
+
+
+def test_ensure_cookie_file_interactive_empty_input_returns_false(tmp_path: Path, monkeypatch):
+    import builtins
+
+    from muse2api.cookies import ensure_cookie_file
+
+    jar_path = tmp_path / "empty.txt"
+    monkeypatch.setattr(builtins, "input", lambda _: "")
+
+    assert ensure_cookie_file(jar_path, is_interactive=True) is False
+    assert not jar_path.exists()

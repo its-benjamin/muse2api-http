@@ -114,3 +114,67 @@ class CookieJar:
 
     def copy(self) -> dict[str, str]:
         return dict(self._cookies)
+
+
+def ensure_cookie_file(path: str | Path, is_interactive: bool | None = None) -> bool:
+    """Prompt for cookies interactively if ``path`` is missing or empty.
+
+    Returns ``True`` if a valid cookie file exists or was created, ``False`` otherwise.
+    """
+    import sys
+
+    cookie_path = Path(path)
+    if cookie_path.is_file():
+        try:
+            jar = parse_cookie_file(cookie_path)
+            if "hatch_sess" in jar:
+                return True
+        except (OSError, CookieError):
+            pass
+
+    if is_interactive is None:
+        is_interactive = sys.stdin.isatty() if hasattr(sys, "stdin") else False
+
+    if not is_interactive:
+        return False
+
+    print("=" * 60)
+    print("muse2api: cookies file not found")
+    print(f"Target file: {cookie_path.resolve()}")
+    print("=" * 60)
+    print("To connect to muse.ai, cookies from a logged-in session are required:")
+    print("  1. Log in to https://muse.ai in your browser.")
+    print("  2. Copy the 'hatch_sess' cookie value from DevTools:")
+    print("     F12 -> Application -> Cookies -> https://muse.ai -> copy 'hatch_sess'")
+    print("     (Or export cookies.txt using a browser extension).")
+    print()
+    try:
+        val = input("Paste your 'hatch_sess' cookie value or full Cookie header:\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.")
+        return False
+
+    if not val:
+        print("No cookie provided.")
+        return False
+
+    # Format the cookie
+    if "=" not in val and not val.startswith("{"):
+        cookie_text = f"hatch_sess={val}\n"
+    else:
+        cookie_text = val if val.endswith("\n") else val + "\n"
+
+    try:
+        parse_cookies(cookie_text)
+    except CookieError as exc:
+        print(f"[!] Warning: cookie format warning: {exc}")
+
+    try:
+        cookie_path.parent.mkdir(parents=True, exist_ok=True)
+        cookie_path.write_text(cookie_text, encoding="utf-8")
+        print(f"[+] Saved cookies to {cookie_path.name}!")
+        print("=" * 60)
+        return True
+    except OSError as exc:
+        print(f"[!] Could not write {cookie_path}: {exc}")
+        return False

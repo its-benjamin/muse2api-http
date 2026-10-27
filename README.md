@@ -63,6 +63,18 @@ client instead of an API server, use MuseAI-API directly.
 > All turns run under your single underlying muse.ai account (sharing its workspace
 > and connector credentials). Do not host this as an open public API for untrusted callers.
 
+### How to get your cookies
+
+The gateway authenticates using cookies from your active [muse.ai](https://muse.ai) session:
+
+1. Log in to [muse.ai](https://muse.ai) in your browser.
+2. Get your session cookie:
+   - **Interactive prompt (Easiest):** If you launch the binary or CLI in a terminal without `cookies_muse.txt`, it will automatically prompt you to paste your cookie and save it for you.
+   - **Manual file:** Open DevTools (**F12** $ightarrow$ **Application** or **Storage** $ightarrow$ **Cookies** $ightarrow$ `https://muse.ai`), copy the value of `hatch_sess`, and save it to `cookies_muse.txt` as `hatch_sess=<value>`.
+   - **Full export:** Use a browser extension (such as *Get cookies.txt locally*) while on `muse.ai` and save the exported file as `cookies_muse.txt`.
+
+The server automatically rotates and persists refreshed session tokens in `.muse-state/`.
+
 Choose the running method that fits your setup:
 
 ### Option 1: Standalone binary (No Docker or Python needed)

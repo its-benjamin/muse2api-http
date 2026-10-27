@@ -91,6 +91,13 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    if args.command in {"ping", "chat", "serve"}:
+        try:
+            from .cookies import ensure_cookie_file
+        except ImportError:
+            from muse2api.cookies import ensure_cookie_file
+        ensure_cookie_file(settings.cookies_file)
+
     if args.command == "ping":
         return asyncio.run(_ping(settings))
     if args.command == "chat":
