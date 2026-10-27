@@ -15,3 +15,9 @@ cookies*.txt
 reference/
 references/
 curl_cffi_docs*
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+out.txt

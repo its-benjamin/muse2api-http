@@ -1,0 +1,22 @@
+# Never send credentials, state or local RE artifacts to the build daemon.
+.git
+.github
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+.muse-state/
+data/
+capture/
+rea/
+reference/
+references/
+curl_cffi_docs*
+cookies*.txt
+*.har
+*.log
+.tmp/
+out.txt
+tests/
