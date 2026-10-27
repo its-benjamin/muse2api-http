@@ -394,8 +394,7 @@ python -m pytest tests -q
 ```
 
 `.github/workflows/tests.yml` runs lint and the suite on Python 3.11–3.13;
-`.github/workflows/docker.yml` builds and publishes the GHCR image on pushes to
-`main`/`master` and on `v*` tags. Unit tests cover the wire codec, Noise, CVM
+`.github/workflows/docker.yml` builds and publishes the GHCR image on pushes to `master` and on `v*` tags. Unit tests cover the wire codec, Noise, CVM
 proof construction, protocol discovery, request validation, reference-image
 SSRF guards, media size limits, cookie persistence/reload, task recovery and the
 main-mode subscription loop.
