@@ -49,3 +49,31 @@ def test_cookie_renew_setting_default_and_override():
         assert s2.cookie_renew_seconds == 3600.0
     finally:
         os.environ.pop("MUSE_COOKIE_RENEW_SECONDS", None)
+
+
+def test_close_idle_closes_warm_connection():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from muse2api.pool import Account
+
+    http = MagicMock()
+    http.close = AsyncMock()
+    acc = Account(name="test", http=http)
+
+    mock_conn = MagicMock()
+    mock_conn.close = AsyncMock()
+    mock_conn.is_closed = False
+    acc.conn = mock_conn
+    acc.session = MagicMock()
+
+    from muse2api.pool import AccountPool
+    from muse2api.protocol import ProtocolConfig
+
+    settings = Settings.from_env()
+    pool = AccountPool(settings, protocol=ProtocolConfig.load(), accounts=[acc])
+
+    asyncio.run(pool.close_idle())
+    assert acc.conn is None
+    assert acc.session is None
+    mock_conn.close.assert_awaited_once()
+    http.close.assert_awaited_once()

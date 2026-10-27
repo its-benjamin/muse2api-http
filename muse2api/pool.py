@@ -35,6 +35,8 @@ class Account:
     error_kind: str | None = None  # auth | forbidden | rate_limit | upstream | network
     uses: int = 0
     last_used: float = field(default_factory=time.time)
+    conn: HatchConnection | None = None
+    session: GatewaySession | None = None
 
     def available(self) -> bool:
         return self.healthy or time.monotonic() >= self.cooldown_until
@@ -43,6 +45,13 @@ class Account:
         self.healthy = False
         self.cooldown_until = time.monotonic() + cooldown
         self.last_error = str(error)[:500]
+        if self.conn is not None:
+            try:
+                self.conn._closed.set()
+            except Exception:
+                pass
+            self.conn = None
+            self.session = None
         # Classify the failure so callers/health endpoints can distinguish
         # auth (401) vs forbidden (403) vs rate-limit (429) vs upstream/network.
         self.last_status = None
@@ -124,6 +133,8 @@ class AccountPool:
         return account
 
     async def _open(self, account: Account) -> tuple[Account, GatewaySession, HatchConnection]:
+        if account.conn is not None and not account.conn.is_closed and account.session is not None:
+            return account, account.session, account.conn
         session = await account.http.bootstrap()
         conn = await HatchConnection.connect(
             session,
@@ -137,6 +148,8 @@ class AccountPool:
             proxy=self.settings.proxy,
             ws_fallback=self.settings.ws_fallback,
         )
+        account.conn = conn
+        account.session = session
         return account, session, conn
 
     async def _retry_after_reload(self, account: Account) -> bool:
@@ -234,8 +247,15 @@ class AccountPool:
         ]
 
     async def close_idle(self) -> None:
-        """Close open HTTP sessions during idle sleep."""
+        """Close open HTTP and warm WebSocket sessions during idle sleep."""
         for account in self.accounts:
+            if account.conn is not None:
+                try:
+                    await account.conn.close()
+                except Exception:
+                    pass
+                account.conn = None
+                account.session = None
             try:
                 await account.http.close()
             except Exception:
@@ -243,4 +263,11 @@ class AccountPool:
 
     async def close(self) -> None:
         for account in self.accounts:
+            if account.conn is not None:
+                try:
+                    await account.conn.close()
+                except Exception:
+                    pass
+                account.conn = None
+                account.session = None
             await account.http.close()

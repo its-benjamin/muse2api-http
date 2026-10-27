@@ -314,8 +314,10 @@ class ChatService:
                 events=events,
                 media=media,
             )
-        finally:
-            await conn.close()
+        except Exception:
+            # If the turn failed unexpectedly on this connection, mark closed so next turn reconnects
+            conn._closed.set()
+            raise
 
     async def _poll_thread_reply(
         self,
@@ -487,7 +489,8 @@ class ChatService:
             if polls == 1 and time.monotonic() - started < 1.0:
                 text_stable_at = None
 
-            await asyncio.sleep(0.8)
+            poll_interval = 0.35 if (current_text and text_stable_at is None) else 0.6
+            await asyncio.sleep(poll_interval)
 
         return best, best_id, captured, media
 
