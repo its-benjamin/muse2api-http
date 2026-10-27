@@ -37,3 +37,15 @@ def test_http_client_recreated_after_close():
 
     # Cleanup
     asyncio.run(http.close())
+
+
+def test_cookie_renew_setting_default_and_override():
+    s = Settings.from_env()
+    assert s.cookie_renew_seconds == 7200.0
+
+    os.environ["MUSE_COOKIE_RENEW_SECONDS"] = "3600"
+    try:
+        s2 = Settings.from_env()
+        assert s2.cookie_renew_seconds == 3600.0
+    finally:
+        os.environ.pop("MUSE_COOKIE_RENEW_SECONDS", None)

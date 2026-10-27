@@ -52,7 +52,7 @@ _FUNCTION_TAG_RE = re.compile(
     r"<function\s*=\s*[\"']?([A-Za-z_][\w.-]*)[\"']?\s*>(.*?)</function>", re.DOTALL | re.IGNORECASE
 )
 _BARE_OBJECT_RE = re.compile(
-    r"(?:^|\n)\s*(\{\s*\"function\"\s*:\s*\"[^\"]+\".*?\})\s*(?:\n|$)", re.DOTALL
+    r"(?:^|\n)\s*(\{\s*\"(?:name|tool|function)\"\s*:\s*\"[^\"]+\".*?\})\s*(?:\n|$)", re.DOTALL
 )
 _BARE_ARRAY_RE = re.compile(r"\"tool_calls\"\s*:\s*\[(.*?)\]\s*(?=,\s*\"|\}|\n|$)", re.DOTALL)
 
@@ -123,53 +123,34 @@ def tools_active(body: dict) -> bool:
 
 def _instruction_line(mode: str, forced: str) -> str:
     if forced:
-        return (
-            f'For this turn you MUST output a tool-call JSON block for "{forced}". Reply '
-            "with exactly one block and nothing else - do not answer the question yourself, "
-            "even if you know the answer."
-        )
+        return f'Please call the function "{forced}" using a ```json block.'
     if mode == "required":
-        return (
-            "For this turn you MUST output a tool-call JSON block for one of the tools above. "
-            "Reply with exactly one block and nothing else - do not answer the question "
-            "yourself, even if you know the answer."
-        )
-    return "Only use tool-call blocks when a tool is actually needed for the task."
+        return "Please call one of the functions above using a ```json block."
+    return "If a function is needed, write a ```json block. If not, answer normally in plain text."
 
 
 def build_tool_instructions(body: dict) -> str:
     defs, mode, forced = selectable_tools(body)
     if not defs:
         return ""
-    # Keep the framing short and matter-of-fact. The upstream model honestly
-    # refuses elaborate "system tool protocol" prose, but it will write tool
-    # invocation blocks when the instruction is a plain data-format request.
     return "\n".join([
-        "To ask the calling program to run a tool, the reply is a single JSON block like:",
+        "Available functions:",
+        "```json",
+        json.dumps(defs, ensure_ascii=False, indent=2),
+        "```",
         "",
-        f"    {MARKER} {{\"name\": \"fn_name\", \"arguments\": {{\"arg\": \"value\"}}}} {MARKER}",
+        "To call a function, respond with a JSON block:",
+        "```json",
+        '{"name": "function_name", "arguments": {"param": "value"}}',
+        "```",
         "",
         _instruction_line(mode, forced),
-        "",
-        "Available tools for the calling program:",
-        json.dumps(defs, ensure_ascii=False, indent=2),
-        "",
-        "Do not pretend to run a tool; just emit the block and stop the turn.",
     ])
-def build_tool_reminder() -> str:
-    example = f'{MARKER} {{"name": "run_command", "arguments": {{"command": "ls -la"}}}} {MARKER}'
-    return "\n".join([
-        "<muse2api tool-exchange protocol reminder>",
-        "- tool_call blocks (or ```json blocks) are requests, not execution claims. Emit",
-        "  the next tool request when you need one; the wrapper program executes it.",
-        "- Stay honest: never claim you actually ran a tool; you only wrote the request.",
-        "- Once you get a tool result that shows success, do not retry it and return a",
-        "  final answer once the task is done.",
-        "- Ask for the simplest tool; do not bundle many in one reply beyond what the protocol allows.",
-        "",
-        f"    {example}",
-        "Keep the reply to one block if a tool is needed; never drop the block.",
-    ])
+
+
+def build_tool_reminder(body: dict | None = None) -> str:
+    return "(Note: If you need to call a function, output the ```json block. If you already have the result or don't need a tool, answer normally.)"
+
 
 def _parse_maybe_json(text: Any) -> Any:
     if not isinstance(text, str) or not text.strip():
@@ -436,6 +417,8 @@ def apply_tool_bridge(content: str, body: dict) -> dict:
     if not accepted:
         return {**diagnostics, "reason": "no-called-tool-was-offered",
                 "content": content, "tool_calls": []}
+    if body.get("parallel_tool_calls") is False:
+        accepted = accepted[:1]
 
     tool_calls = []
     for name, arguments in accepted:
@@ -461,7 +444,7 @@ def apply_tool_bridge(content: str, body: dict) -> dict:
 def render_tool_call(name: str, arguments: Any) -> str:
     if not isinstance(arguments, str):
         arguments = json.dumps(arguments if arguments is not None else {}, ensure_ascii=False)
-    return f'{MARKER} {{"name": {json.dumps(name)}, "arguments": {arguments}}} {MARKER}'
+    return f"```json\n{{\"name\": {json.dumps(name)}, \"arguments\": {arguments}}}\n```"
 
 
 def render_tool_transcript(messages: Iterable[dict]) -> list[str]:
@@ -471,21 +454,27 @@ def render_tool_transcript(messages: Iterable[dict]) -> list[str]:
         if not isinstance(message, dict):
             continue
         role = message.get("role")
-        if role == "assistant" and isinstance(message.get("tool_calls"), list):
-            text = _content_text(message.get("content"))
-            calls = []
-            for call in message["tool_calls"]:
-                fn = call.get("function") if isinstance(call, dict) else None
-                if isinstance(fn, dict) and isinstance(fn.get("name"), str):
-                    calls.append(render_tool_call(fn["name"], fn.get("arguments")))
-            if calls:
-                prefix = f"{text}\n" if text else ""
-                lines.append(f"assistant: {prefix}" + "\n".join(calls))
-        elif role == "tool":
+        if role == "assistant":
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list) and isinstance(message.get("function_call"), dict):
+                fn = message["function_call"]
+                if isinstance(fn.get("name"), str):
+                    tool_calls = [{"function": fn}]
+            if isinstance(tool_calls, list):
+                text = _content_text(message.get("content"))
+                calls = []
+                for call in tool_calls:
+                    fn = call.get("function") if isinstance(call, dict) else None
+                    if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+                        calls.append(render_tool_call(fn["name"], fn.get("arguments")))
+                if calls:
+                    prefix = f"{text}\n" if text else ""
+                    lines.append(f"assistant: {prefix}" + "\n".join(calls))
+        elif role in {"tool", "function"}:
             text = _content_text(message.get("content"))
             if text:
                 name = message.get("name") or message.get("tool_call_id") or "tool"
-                lines.append(f"tool: {RESULT_MARKER} {name}: {text} {RESULT_MARKER}")
+                lines.append(f"tool [Result of {name}]:\n{text}")
     return lines
 
 

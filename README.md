@@ -148,7 +148,8 @@ volumes:
 
 The container runs unprivileged as `muse` (uid 10001) and listens on port `8130`
 by default (map `-p 8130:8130` or `-p 18610:8130` to match the local port).
-The healthcheck polls `/healthz` every 30 s.
+When idle, the gateway releases upstream connections while keeping the HTTP port
+open and periodically renewing cookies in the background.
 
 ## Sessions and permissions
 
@@ -240,9 +241,12 @@ re-reading the file on every restart:
 - If authentication fails (401/403), the account reloads the configured cookie
   file and retries once before it is cooled down — so replacing
   `cookies_muse.txt` is picked up without restarting the server.
-- The keepalive loop calls `/api/session` every 6 hours (and the pool refreshes
-  every 30 minutes while the server is active), refreshing the rolling cookies
-  even when no client requests are coming in.
+- **Idle sleep & cookie preservation:** When inactive for `MUSE_IDLE_SLEEP_SECONDS`
+  (default 1800 s / 30 min, or set lower e.g. 300 s / 5 min), the gateway enters
+  idle sleep: it closes open sessions to muse.ai and stops ongoing WebSocket keepalives.
+  The HTTP server stays active to receive requests, and the background loop still
+  renews rolling cookies via `/api/session` every 6 hours so your login never expires.
+  Any new API request wakes the gateway immediately.
 
 You only need a new export if the account was logged out or the VM was unused
 for longer than the cookie lifetime (48 hours for the short-lived cookie) — the

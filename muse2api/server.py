@@ -577,13 +577,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def _keepalive(app: FastAPI) -> None:
         last_refresh = time.time()
-        last_cookie_renew = time.time()
+        # Initialize to 0 so the first renewal runs on startup (after the initial 60s sleep),
+        # immediately rotating and persisting fresh session tokens.
+        last_cookie_renew = 0.0
         while True:
             await asyncio.sleep(60)
             now = time.time()
 
-            # Always renew cookies via lightweight GET /api/session every 6 hours, even during idle sleep
-            if now - last_cookie_renew >= 6 * 3600:
+            renew_interval = settings.cookie_renew_seconds
+            if renew_interval > 0 and (now - last_cookie_renew >= renew_interval):
                 last_cookie_renew = now
                 try:
                     renewed = await app.state.pool.renew_cookies()
@@ -845,6 +847,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if bridge_active and final is not None:
                     repaired = apply_tool_bridge(final.text, body)
                     if repaired["applied"]:
+                        if repaired.get("content"):
+                            yield sse({
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": repaired["content"]},
+                                    "finish_reason": None,
+                                }],
+                            })
                         for index, call in enumerate(repaired["tool_calls"]):
                             yield sse({
                                 "id": completion_id,

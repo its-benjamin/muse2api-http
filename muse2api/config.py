@@ -46,6 +46,8 @@ class Settings:
     # Idle auto-sleep: seconds of inactivity before pausing keepalive
     # and releasing idle network sessions (0 to disable, default 1800 = 30m)
     idle_sleep_seconds: float = 1800.0
+    # Periodic cookie renewal interval (seconds) to prevent Meta/muse session expiry (default 7200 = 2h)
+    cookie_renew_seconds: float = 7200.0
     # Prefix for generated media URLs, e.g. https://api.example.com/v1/media
     public_base: str | None = None
     # Optional confidential-VM credentials. Standard VMs ignore both.
@@ -84,6 +86,7 @@ class Settings:
             approval_policy=os.environ.get("MUSE2API_APPROVAL_POLICY", "off").strip().lower(),
             approval_ask=os.environ.get("MUSE2API_APPROVAL_ASK", "allow_once").strip().lower(),
             idle_sleep_seconds=float(os.environ.get("MUSE_IDLE_SLEEP_SECONDS", "1800")),
+            cookie_renew_seconds=float(os.environ.get("MUSE_COOKIE_RENEW_SECONDS", "7200")),
             public_base=os.environ.get("MUSE2API_PUBLIC_BASE") or None,
             cvm_rv_key=os.environ.get("MUSE_CVM_RV_KEY") or None,
             attestation_cmd=os.environ.get("MUSE_ATTESTATION_CMD") or None,

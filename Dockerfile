@@ -22,8 +22,5 @@ USER muse
 
 EXPOSE 8130
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8130/healthz')" || exit 1
-
 ENTRYPOINT ["python", "-m", "muse2api"]
 CMD ["serve"]

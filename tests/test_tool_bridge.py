@@ -88,14 +88,14 @@ def test_no_bridge_when_no_tools_or_choice_none():
 def test_instructions_include_schema_and_forced_rule():
     instructions = build_tool_instructions({**BODY, "tool_choice": "required"})
     assert "read_file" in instructions
-    assert "MUST output a tool-call JSON block" in instructions
-    assert "protocol reminder" in build_tool_reminder()
+    assert "Please call one of the functions above using a ```json block" in instructions
+    assert "If you need to call a function" in build_tool_reminder()
 
     forced = build_tool_instructions({
         "tools": BODY["tools"],
         "tool_choice": {"type": "function", "function": {"name": "read_file"}},
     })
-    assert 'you MUST output a tool-call JSON block for "read_file"' in forced
+    assert 'Please call the function "read_file" using a ```json block' in forced
 
 
 def test_parse_tool_choice_shapes():
@@ -114,4 +114,26 @@ def test_transcript_renders_calls_and_results():
     ])
     assert len(lines) == 2
     assert "reading" in lines[0] and "read_file" in lines[0]
-    assert "hello" in lines[1] and "<<TOOL_RESULT>>" in lines[1]
+    assert "hello" in lines[1] and "[Result of read_file]" in lines[1]
+
+    # Supports legacy role: "function" and function_call
+    legacy = render_tool_transcript([
+        {"role": "assistant", "function_call": {"name": "read_file", "arguments": '{"path":"b.py"}'}},
+        {"role": "function", "name": "read_file", "content": "legacy_output"},
+    ])
+    assert len(legacy) == 2
+    assert "read_file" in legacy[0]
+    assert "legacy_output" in legacy[1] and "[Result of read_file]" in legacy[1]
+
+
+def test_parallel_tool_calls_false_limits_to_one():
+    text = (
+        '```json\n{"name": "read_file", "arguments": {"path": "a.py"}}\n```\n'
+        '```json\n{"name": "read_file", "arguments": {"path": "b.py"}}\n```'
+    )
+    res_parallel = apply_tool_bridge(text, BODY)
+    assert len(res_parallel["tool_calls"]) == 2
+
+    res_single = apply_tool_bridge(text, {**BODY, "parallel_tool_calls": False})
+    assert len(res_single["tool_calls"]) == 1
+    assert json.loads(res_single["tool_calls"][0]["function"]["arguments"]) == {"path": "a.py"}
