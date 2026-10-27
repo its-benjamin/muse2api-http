@@ -330,6 +330,8 @@ class NoiseReassembler:
         if len(chunk.payload) > MAX_NOISE_CHUNK_PAYLOAD:
             self._pending.pop(chunk.chunk_id, None)
             raise ValueError("noise frame payload too large")
+        if chunk.chunk_id not in self._pending and len(self._pending) >= 32:
+            self._pending.pop(next(iter(self._pending)), None)
         total, parts, size = self._pending.get(
             chunk.chunk_id, (chunk.total_chunks, {}, 0)
         )

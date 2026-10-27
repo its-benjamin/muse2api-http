@@ -82,17 +82,20 @@ Choose the running method that fits your setup:
 Prebuilt binaries are published with each release:
 
 1. Download the latest binary for your OS from [GitHub Releases](https://github.com/its-benjamin/muse2api-http/releases):
-   - **Windows**: `muse2api-windows-amd64.exe`
-   - **Linux**: `muse2api-linux-amd64`
+   - **Windows (x64)**: `muse2api-windows-amd64.exe`
+   - **Linux (x64)**: `muse2api-linux-amd64`
+   - **macOS (Apple Silicon M1–M4)**: `muse2api-darwin-arm64`
+   - **macOS (Intel)**: `muse2api-darwin-amd64`
+   - Verify integrity with `SHA256SUMS`.
 2. Place your `cookies_muse.txt` in the same directory.
 3. Run the server:
    ```bash
    # Windows
    muse2api-windows-amd64.exe serve
 
-   # Linux
-   chmod +x muse2api-linux-amd64
-   ./muse2api-linux-amd64 serve
+   # Linux / macOS
+   chmod +x muse2api-*
+   ./muse2api-linux-amd64 serve   # or ./muse2api-darwin-arm64 serve
    ```
 
 ### Option 2: Run with Python (`uvx`, `pipx`, or `pip`)
@@ -114,7 +117,7 @@ python -m muse2api serve                     # http://127.0.0.1:18610
 
 ### Option 3: Docker (Prebuilt GHCR image)
 
-Prebuilt images are published to GHCR. Run the latest release:
+Prebuilt multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR. Run the latest release:
 
 ```bash
 docker run -d --name muse2api-http \

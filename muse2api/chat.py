@@ -373,6 +373,12 @@ class ChatService:
                 data = response.json() or {}
             except (TimeoutError, GatewayError) as exc:
                 log.debug("history poll failed: %s", exc)
+                if getattr(conn, "is_closed", False):
+                    log.info("gateway connection closed mid-turn; reconnecting to recover thread %s", session_id)
+                    try:
+                        _, _, conn = await self.pool.connect()
+                    except Exception as rec_exc:
+                        log.warning("gateway reconnection failed: %s", rec_exc)
                 await asyncio.sleep(1.0)
                 continue
 

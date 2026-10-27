@@ -176,6 +176,7 @@ class _Stream:
         text = self._decoder.decode(data)
         if not text:
             return
+        self._buffer += text
         while "\n" in self._buffer:
             line, _, self._buffer = self._buffer.partition("\n")
             line = line.strip()
@@ -221,6 +222,10 @@ class HatchConnection:
         self._closed = asyncio.Event()
         self._fatal: BaseException | None = None
         self._receiver = asyncio.create_task(self._receive_loop(), name="hatch-receiver")
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed.is_set()
 
     @classmethod
     async def connect(
