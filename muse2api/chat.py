@@ -43,6 +43,76 @@ DEFAULT_SESSION_KEY = "default"
 # window before declaring a reply complete, otherwise long turns truncate.
 TEXT_SETTLE_SECONDS = 2.0
 
+# Markers indicating upstream refused or failed to invoke media tools,
+# allowing early return without waiting out the full media grace period.
+MEDIA_REFUSAL_MARKERS: tuple[str, ...] = (
+    # Tool failures & unavailability
+    "image tool is currently unavailable",
+    "video tool is currently unavailable",
+    "tool is currently unavailable",
+    "tool is unavailable",
+    "failed after multiple attempts",
+    "no image was created",
+    "no video was created",
+    "could not create an image",
+    "could not create a video",
+    "unable to create an image",
+    "unable to create a video",
+    "unable to generate an image",
+    "unable to generate a video",
+    "could not generate",
+    "couldn't generate",
+    "cannot generate",
+    "can't generate",
+    "unable to generate",
+    "could not create",
+    "couldn't create",
+    "cannot create",
+    "can't create",
+    "unable to create",
+    "failed to generate",
+    "generation failed",
+    "error generating",
+    "not able to create",
+    "not able to generate",
+    # Safety, Policy, and Real People restrictions
+    "content policy",
+    "safety policy",
+    "safety guidelines",
+    "community standards",
+    "community guidelines",
+    "policy violation",
+    "against our policies",
+    "against my policy",
+    "violates our",
+    "violates my",
+    "depicting real people",
+    "images of real people",
+    "real individuals",
+    "public figures",
+    "cannot depict",
+    "unable to depict",
+    # Region & Quota
+    "not available for your account",
+    "not available in your",
+    "available for your account in your country or region",
+    "country or region",
+    "lasting restriction",
+    "out of credits",
+    "quota",
+    "limit reached",
+    # Conversational refusal suffixes
+    "want me to try again",
+    "try again later",
+    "would you like me to try",
+    # Multilingual refusal markers
+    "没生成成",
+    "没生成成功",
+    "未生成成功",
+    "生成失败",
+    "无法生成",
+)
+
 
 @dataclass(slots=True)
 class ChatSession:
@@ -247,7 +317,7 @@ class ChatService:
         kind: str = "image",
         timeout: float | None = None,
         items: list[dict] | None = None,
-        refusal_markers: tuple[str, ...] = (),
+        refusal_markers: tuple[str, ...] | None = None,
     ) -> ChatResult:
         """Generate media in a throwaway thread and collect the artifacts."""
         state = self.sessions.get(f"media:{kind}:{uuid.uuid4()}")
@@ -258,7 +328,7 @@ class ChatService:
             timeout=timeout or self.settings.chat_timeout,
             want_media=True,
             items=items,
-            refusal_markers=refusal_markers,
+            refusal_markers=refusal_markers if refusal_markers is not None else MEDIA_REFUSAL_MARKERS,
         )
 
     # -- thread mode -------------------------------------------------------
@@ -473,8 +543,8 @@ class ChatService:
                     media_stable_at = time.monotonic()
                 else:
                     media_stable_at = None
-                    if text_stable_at is not None and time.monotonic() - text_stable_at > 25.0:
-                        # Text settled but no artifact arrived; surface what we have.
+                    if text_stable_at is not None and time.monotonic() - text_stable_at > 4.0:
+                        # Text settled and no artifact arrived; surface what we have promptly.
                         return best, best_id, captured, media
             elif (text_stable_at is not None
                   and time.monotonic() - text_stable_at > TEXT_SETTLE_SECONDS):

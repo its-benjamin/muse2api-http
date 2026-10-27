@@ -139,7 +139,23 @@ def classify_video_error(text: str) -> str:
         return "video_unavailable_region"
     if "quota" in lowered or "credits" in lowered or "limit reached" in lowered:
         return "video_quota_exhausted"
+    if any(h in lowered for h in ("policy", "safety", "guideline", "violate", "real people", "depicting real")):
+        return "video_policy_violation"
+    if any(h in lowered for h in ("unavailable", "failed after multiple attempts", "no video was created")):
+        return "video_tool_unavailable"
     return "video_generation_failed"
+
+
+def classify_image_error(text: str) -> str:
+    """Turn the model's prose refusal into a stable API error code."""
+    lowered = text.lower()
+    if any(h in lowered for h in ("policy", "safety", "guideline", "violate", "real people", "depicting real")):
+        return "image_policy_violation"
+    if any(h in lowered for h in ("unavailable", "failed after multiple attempts", "no image was created")):
+        return "image_tool_unavailable"
+    if any(h in lowered for h in ("quota", "credits", "limit", "out of credits")):
+        return "image_quota_exhausted"
+    return "no_image"
 
 MODEL_ALIASES = {
     "muse-spark",
@@ -1212,9 +1228,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         images = [ref for ref in result.media if ref.kind == "image"]
         if not images:
+            code = classify_image_error(result.text or "")
             raise ApiError(
                 result.text or "muse did not return an image",
-                status=502, type_="upstream_error", code="no_image",
+                status=400 if "policy" in code else 502,
+                type_="invalid_request_error" if "policy" in code else "upstream_error",
+                code=code,
             )
 
         _account, _session, conn = await app.state.pool.connect()
@@ -1301,8 +1320,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         images = [ref for ref in result.media if ref.kind == "image"]
         if not images:
-            raise ApiError(result.text or "muse did not return an edited image", status=502,
-                           type_="upstream_error", code="no_image")
+            code = classify_image_error(result.text or "")
+            raise ApiError(
+                result.text or "muse did not return an edited image",
+                status=400 if "policy" in code else 502,
+                type_="invalid_request_error" if "policy" in code else "upstream_error",
+                code=code,
+            )
         _account, _session, conn = await app.state.pool.connect()
         try:
             ref = images[-1]

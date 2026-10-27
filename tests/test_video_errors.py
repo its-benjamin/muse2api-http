@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import time
 
+from muse2api.chat import MEDIA_REFUSAL_MARKERS
 from muse2api.server import (
+    classify_image_error,
     classify_video_error,
     load_video_block,
     save_video_block,
@@ -52,3 +54,29 @@ def test_corrupt_video_block_does_not_block(tmp_path):
     path.write_text("not json", encoding="utf-8")
     assert load_video_block(path) == 0.0
     assert load_video_block(tmp_path / "missing.json") == 0.0
+
+
+def test_walter_white_image_tool_unavailable_matches_refusal_markers():
+    refusal = (
+        "I tried to generate it, but the image tool is currently unavailable — it failed "
+        "after multiple attempts, so no image was created. Want me to try again later with "
+        "the same Walter White desert / yellow hazmat suit prompt at 1:1?"
+    )
+    lowered = refusal.lower()
+    matched = [marker for marker in MEDIA_REFUSAL_MARKERS if marker in lowered]
+    assert len(matched) >= 3
+    assert "image tool is currently unavailable" in matched
+    assert "failed after multiple attempts" in matched
+    assert "no image was created" in matched
+    assert classify_image_error(refusal) == "image_tool_unavailable"
+
+
+def test_classify_image_error_policy_and_quota():
+    assert classify_image_error("Violates community safety guidelines regarding real people") == "image_policy_violation"
+    assert classify_image_error("Your account has reached its daily limit") == "image_quota_exhausted"
+    assert classify_image_error("generic failure") == "no_image"
+
+
+def test_classify_video_error_policy_and_unavailable():
+    assert classify_video_error("Video violates our content policy on safety") == "video_policy_violation"
+    assert classify_video_error("Video tool is currently unavailable") == "video_tool_unavailable"
