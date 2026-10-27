@@ -231,10 +231,14 @@ verifier trust anchors. Standard-VM accounts never enter this path.
 Stealth here means looking like the browser that owns the cookies, not adding
 random headers:
 
-- `curl_cffi` with `impersonate="chrome"` — the docs recommend the latest
-  Chrome/Safari alias — reproduces Chrome's TLS, HTTP/2 and HTTP/3
-  fingerprints. The alias resolves to the Chrome build bundled with the
-  installed `curl_cffi`; `MUSE_HTTP_VERSION=auto` lets the profile negotiate h3.
+- `curl_cffi` with `impersonate="chrome"` reproduces the TLS (JA3/JA4) and
+  HTTP/2 fingerprint of the Chrome build bundled with the installed
+  `curl_cffi` (currently Chrome 150, so the UA and `sec-ch-ua` match it).
+  Measured against a fingerprint echo: JA4 `t13d1516h2_8daaf6152771_806a8c22fdea`,
+  the canonical Chrome value.
+- HTTP/2 is pinned (`MUSE_HTTP_VERSION=2`). The profile's h2 settings,
+  WINDOW_UPDATE and priority frames are exact; libcurl's HTTP/3 stack has
+  different QUIC transport parameters from Chromium's, so h3 is opt-in only.
 - The UA comes from the impersonation profile for HTTP and the WebSocket
   handshake, so both transports stay consistent. `MUSE_USER_AGENT` overrides it
   if an account is bound to a specific browser.
@@ -247,8 +251,13 @@ random headers:
 - The WebSocket upgrade goes through the same `curl_cffi` session, so the
   handshake carries the same TLS/HTTP fingerprint and header set
   (`Sec-Fetch-Mode: websocket`, `Sec-Fetch-Site: cross-site`,
-  `Pragma`/`Cache-Control`). If that path ever fails, it falls back to the
-  stdlib `websockets` client instead of dropping the request.
+  `Pragma`/`Cache-Control`). The stdlib `websockets` fallback is **opt-in**
+  (`MUSE_WS_FALLBACK=1`): it runs on Python/OpenSSL, so it would present a
+  different TLS fingerprint from the HTTP side and is refused by default.
+- `MUSE_PROXY` routes the muse.ai HTTP session, the WebSocket upgrade and
+  signed-media downloads through one egress proxy. User-supplied reference
+  URLs are deliberately not proxied: the SSRF guard resolves them locally, and
+  a proxy would move that resolution beyond the guard.
 
 ## Configuration
 
@@ -279,8 +288,10 @@ random headers:
 | `MUSE_CVM_RV_KEY` | unset | CVM recovery key |
 | `MUSE_ATTESTATION_CMD` | unset | External attestation verifier |
 | `MUSE_IMPERSONATE` | `chrome` | curl_cffi profile alias; pin a version if needed |
-| `MUSE_HTTP_VERSION` | `auto` | `auto`, `2`, `3`, `1.1` |
+| `MUSE_HTTP_VERSION` | `2` | `2` (default), `auto`, `3`, `1.1` |
 | `MUSE_USER_AGENT` | profile | Optional UA override |
+| `MUSE_PROXY` | unset | Egress proxy for muse.ai HTTP, WebSocket and media (`http://`, `socks5://`, `socks5h://`, with optional `user:pass`) |
+| `MUSE_WS_FALLBACK` | `0` | Allow the stdlib `websockets` fallback (different TLS fingerprint; off by default) |
 
 ## Known limits
 

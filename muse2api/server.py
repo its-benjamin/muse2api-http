@@ -1176,7 +1176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             for ref in images[: max(1, n)]:
                 try:
-                    raw = await download_media(conn, ref)
+                    raw = await download_media(conn, ref, proxy=app.state.pool.settings.proxy)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("image download failed: %s", exc)
                     continue
@@ -1260,7 +1260,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _account, _session, conn = await app.state.pool.connect()
         try:
             ref = images[-1]
-            raw_out = await download_media(conn, ref)
+            raw_out = await download_media(conn, ref, proxy=app.state.pool.settings.proxy)
         finally:
             await conn.close()
         name = app.state.media.save(raw_out, ref.extension)
@@ -1310,7 +1310,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _account, _session, conn = await app.state.pool.connect()
             try:
                 ref = videos[-1]
-                raw = await download_media(conn, ref)
+                raw = await download_media(conn, ref, proxy=app.state.pool.settings.proxy)
             finally:
                 await conn.close()
             name = app.state.media.save(raw, ref.extension or ".mp4")

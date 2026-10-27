@@ -134,6 +134,8 @@ class AccountPool:
             ws_client=account.http.client,
             impersonate=self.settings.impersonate,
             user_agent=self.settings.user_agent,
+            proxy=self.settings.proxy,
+            ws_fallback=self.settings.ws_fallback,
         )
         return account, session, conn
 

@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 
 from websockets.asyncio.client import connect as ws_connect
 
+from .config import proxy_map
 from .cvm import (
     build_message3,
     decode_challenge,
@@ -235,6 +236,8 @@ class HatchConnection:
         ws_client=None,
         impersonate: str = "chrome",
         user_agent: str | None = None,
+        proxy: str | None = None,
+        ws_fallback: bool = False,
     ) -> HatchConnection:
         url = session.websocket_url(lb_host=lb_host, path=ws_path)
         log.debug("connecting %s", url.split("?")[0])
@@ -243,7 +246,12 @@ class HatchConnection:
         if ws_client is None:
             from curl_cffi import AsyncSession
 
-            own_client = AsyncSession(impersonate=impersonate, max_clients=2)
+            proxies = proxy_map(proxy)
+            own_client = AsyncSession(
+                impersonate=impersonate,
+                max_clients=2,
+                **({"proxies": proxies} if proxies else {}),
+            )
             ws_client = own_client
         try:
             from curl_cffi import WebSocketRetryStrategy
@@ -260,7 +268,15 @@ class HatchConnection:
                 ws_retry=WebSocketRetryStrategy(retry=True, count=3),
             )
             log.debug("websocket via curl_cffi (%s fingerprint)", impersonate)
-        except Exception as exc:  # noqa: BLE001 - keep a stdlib TLS fallback
+        except Exception as exc:  # noqa: BLE001 - stdlib fallback is opt-in
+            if not ws_fallback:
+                if own_client is not None:
+                    await own_client.close()
+                raise GatewayError(
+                    "curl_cffi websocket failed; refusing the stdlib fallback "
+                    f"because it leaks a different TLS fingerprint (set "
+                    f"MUSE_WS_FALLBACK=1 to allow it): {exc}"
+                ) from exc
             log.warning("curl_cffi websocket failed (%s); using websockets", exc)
             fallback_ua = user_agent or (
                 FIREFOX_BROWSER_UA if "firefox" in (impersonate or "").lower() else CHROME_BROWSER_UA

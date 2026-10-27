@@ -19,7 +19,7 @@ from curl_cffi.requests import AsyncSession
 
 if TYPE_CHECKING:
     from .gateway import HatchConnection
-from .config import Settings
+from .config import Settings, proxy_map
 from .cookies import CookieError, CookieJar, parse_cookie_file
 from .gateway import GatewaySession
 
@@ -177,6 +177,7 @@ class MuseHTTP:
         return True
 
     def _create_client(self) -> AsyncSession:
+        proxies = proxy_map(self.settings.proxy)
         return AsyncSession(
             impersonate=self.settings.impersonate,
             timeout=self.settings.request_timeout,
@@ -184,6 +185,7 @@ class MuseHTTP:
             max_clients=50,
             retry=2,
             cookies=self.jar.copy(),
+            **({"proxies": proxies} if proxies else {}),
         )
 
     @property
@@ -402,10 +404,20 @@ class MuseHTTP:
         session = await self.bootstrap()
         try:
             conn = await HatchConnection.connect(
-                session, ws_client=self.client, impersonate=self.settings.impersonate)
+                session,
+                ws_client=self.client,
+                impersonate=self.settings.impersonate,
+                proxy=self.settings.proxy,
+                ws_fallback=self.settings.ws_fallback,
+            )
         except Exception:
             # Tokens are short-lived; force one re-bootstrap before surfacing.
             session = await self.bootstrap(force=True)
             conn = await HatchConnection.connect(
-                session, ws_client=self.client, impersonate=self.settings.impersonate)
+                session,
+                ws_client=self.client,
+                impersonate=self.settings.impersonate,
+                proxy=self.settings.proxy,
+                ws_fallback=self.settings.ws_fallback,
+            )
         return session, conn

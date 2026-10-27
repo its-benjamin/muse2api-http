@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def proxy_map(proxy: str | None) -> dict[str, str] | None:
+    """``proxies=`` value for curl_cffi: one egress proxy for both schemes."""
+    if not proxy:
+        return None
+    return {"http": proxy, "https": proxy}
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -41,10 +48,17 @@ class Settings:
     cvm_rv_key: str | None = None
     attestation_cmd: str | None = None
     # Browser fingerprint. Keep the cookie's browser family to avoid a
-    # UA/TLS mismatch. "auto" lets the impersonation profile pick HTTP/2.
+    # UA/TLS mismatch. HTTP/2 is pinned by default: the Chrome profile's h2
+    # fingerprint is exact, while libcurl's HTTP/3 stack has different QUIC
+    # transport parameters from Chromium's. "auto"/"3" opt back in.
     impersonate: str = "chrome"
-    http_version: str = "auto"
+    http_version: str = "2"
     user_agent: str | None = None
+    # Optional egress proxy for muse.ai HTTP and WebSocket traffic.
+    proxy: str | None = None
+    # Off by default: the stdlib websockets fallback runs on Python/OpenSSL and
+    # therefore presents a different TLS fingerprint than the Chrome profile.
+    ws_fallback: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -69,8 +83,10 @@ class Settings:
             cvm_rv_key=os.environ.get("MUSE_CVM_RV_KEY") or None,
             attestation_cmd=os.environ.get("MUSE_ATTESTATION_CMD") or None,
             impersonate=os.environ.get("MUSE_IMPERSONATE", "chrome"),
-            http_version=os.environ.get("MUSE_HTTP_VERSION", "auto").strip().lower(),
+            http_version=os.environ.get("MUSE_HTTP_VERSION", "2").strip().lower(),
             user_agent=os.environ.get("MUSE_USER_AGENT") or None,
+            proxy=os.environ.get("MUSE_PROXY") or None,
+            ws_fallback=_env_bool("MUSE_WS_FALLBACK", False),
         )
 
     def ensure_state_dir(self) -> Path:

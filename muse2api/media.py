@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from .config import proxy_map
 from .gateway import HatchConnection
 
 # Hard ceiling for any media we accept from a client or hold in memory.
@@ -258,7 +259,8 @@ async def fetch_public_media(
 
 
 async def download_media(conn: HatchConnection, ref: MediaRef, *, impersonate: str = "chrome",
-                         max_bytes: int = MAX_MEDIA_BYTES) -> bytes:
+                         max_bytes: int = MAX_MEDIA_BYTES,
+                         proxy: str | None = None) -> bytes:
     paths: list[str] = []
     if ref.path:
         clean = _normalize_path(ref.path)
@@ -290,10 +292,12 @@ async def download_media(conn: HatchConnection, ref: MediaRef, *, impersonate: s
             from curl_cffi import CurlFollow
             from curl_cffi.requests import AsyncSession
 
+            proxies = proxy_map(proxy)
             async with AsyncSession(
                 impersonate=impersonate,
                 timeout=120,
                 allow_redirects=CurlFollow.SAFE,
+                **({"proxies": proxies} if proxies else {}),
             ) as client:
                 response = await client.get(ref.url)
                 if 200 <= response.status_code < 300 and response.content:
