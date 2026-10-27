@@ -56,49 +56,63 @@ client instead of an API server, use MuseAI-API directly.
    `/chat/history`. Thread mode keeps one server-side muse side-chat per API
    session. `main` mode subscribes to `/chat/subscribe` deltas instead.
 
-## Quick start
+## Deployment & Running
+
+> **Note on personal use:** This bridge is built for **private, personal self-hosting**
+> (e.g. your private Hermes agent, OpenWebUI, LibreChat, Cursor, or local scripts).
+> All turns run under your single underlying muse.ai account (sharing its workspace
+> and connector credentials). Do not host this as an open public API for untrusted callers.
+
+Choose the running method that fits your setup:
+
+### Option 1: Standalone binary (No Docker or Python needed)
+
+Prebuilt binaries are published with each release:
+
+1. Download the latest binary for your OS from [GitHub Releases](https://github.com/its-benjamin/muse2api-http/releases):
+   - **Windows**: `muse2api-windows-amd64.exe`
+   - **Linux**: `muse2api-linux-amd64`
+2. Place your `cookies_muse.txt` in the same directory.
+3. Run the server:
+   ```bash
+   # Windows
+   muse2api-windows-amd64.exe serve
+
+   # Linux
+   chmod +x muse2api-linux-amd64
+   ./muse2api-linux-amd64 serve
+   ```
+
+### Option 2: Run with Python (`uvx`, `pipx`, or `pip`)
+
+Run directly with `uvx` (no repository clone needed):
 
 ```bash
+uvx --from git+https://github.com/its-benjamin/muse2api-http.git muse2api serve
+```
+
+Or clone the repository and run:
+
+```bash
+git clone https://github.com/its-benjamin/muse2api-http.git
+cd muse2api-http
 python -m pip install -r requirements.txt
-export MUSE_COOKIE_FILE=cookies_muse.txt     # Netscape cookie export
-python -m muse2api ping
-python -m muse2api chat "hello"
 python -m muse2api serve                     # http://127.0.0.1:18610
 ```
 
-With the OpenAI SDK:
+### Option 3: Docker (Prebuilt GHCR image)
 
-```python
-from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:18610/v1", api_key="unused")
-print(client.chat.completions.create(
-    model="muse-spark",
-    messages=[{"role": "user", "content": "hello"}],
-).choices[0].message.content)
-```
-
-`/v1/models` lists `muse-spark` and the configured aliases, so any
-OpenAI-compatible client works without extra adapters.
-
-## Docker
-
-Prebuilt images are published by `.github/workflows/docker.yml`:
-
-- `ghcr.io/its-benjamin/muse2api-http:latest` — newest build of the default branch
-- `ghcr.io/its-benjamin/muse2api-http:<branch>` — `main` / `master`
-- `ghcr.io/its-benjamin/muse2api-http:sha-<commit>` and `v*` tags for releases
+Prebuilt images are published to GHCR. Run the latest release:
 
 ```bash
-docker run -d --name muse2api-http -p 18610:18610 \
-  -e MUSE_COOKIE_FILE=/cookies/cookies_muse.txt \
-  -e MUSE_STATE_DIR=/state \
-  -v "$PWD/cookies_muse.txt:/cookies/cookies_muse.txt:ro" \
-  -v muse-state:/state \
-  -v muse-media:/data/media \
+docker run -d --name muse2api-http \
+  -p 8130:8130 \
+  -v "$PWD/cookies_muse.txt:/app/cookies_muse.txt:ro" \
+  -v muse2api-state:/app/.muse-state \
   ghcr.io/its-benjamin/muse2api-http:latest
 ```
 
-Or with Compose:
+Or with Docker Compose:
 
 ```yaml
 services:
@@ -107,23 +121,22 @@ services:
     container_name: muse2api-http
     restart: unless-stopped
     ports:
-      - "18610:18610"
-    environment:
-      MUSE_COOKIE_FILE: /cookies/cookies_muse.txt
-      MUSE_STATE_DIR: /state
-      MUSE2API_KEY: change-me
+      - "8130:8130"
     volumes:
-      - ./cookies_muse.txt:/cookies/cookies_muse.txt:ro
-      - muse-state:/state
-      - muse-media:/data/media
+      - ./cookies_muse.txt:/app/cookies_muse.txt:ro
+      - muse2api-state:/app/.muse-state
+    # Optional overrides:
+    # environment:
+    #   - MUSE2API_KEY=your-secret-api-key
+    #   - MUSE2API_APPROVAL_POLICY=deny  # or "settings" for personal agent use
+
 volumes:
-  muse-state:
-  muse-media:
+  muse2api-state:
 ```
 
-The container runs as uid 10001 and only `/state` and `/data/media` are
-writable; mount those if you want tasks, rotated cookies and generated media to
-survive a restart. The healthcheck polls `/healthz` every 30 s.
+The container runs unprivileged as `muse` (uid 10001) and listens on port `8130`
+by default (map `-p 8130:8130` or `-p 18610:8130` to match the local port).
+The healthcheck polls `/healthz` every 30 s.
 
 ## Sessions and permissions
 
@@ -133,38 +146,61 @@ it, clients share the `default` thread (and, when `MUSE2API_KEY` is set, the
 bearer token cannot distinguish them).
 
 Muse pauses agent work on permission prompts (network egress, connectors,
-browser actions, purchases). The HTTP API has no UI to answer them, so a turn
-that triggers one would wait until `MUSE_CHAT_TIMEOUT`. Set an explicit policy
-to answer prompts that are scoped to the waiting thread:
+browser actions, direct network protocols). Because headless API clients have no
+UI to show these prompts, an unhandled prompt will block until `MUSE_CHAT_TIMEOUT`.
 
-```bash
-MUSE2API_APPROVAL_POLICY=settings   # off | allow_once | allow_session | allow_always | settings | deny
-MUSE2API_APPROVAL_ASK=allow_once    # answer used when the account setting is "ask"
-```
+### Hosting profiles
 
-- `off` (default): never answer; the upstream turn may time out.
-- `allow_once`: approve the weakest one-shot option the server offers
-  (`allow_once`, `allow_today`, `allow_for_this_task`, ...).
-- `allow_session`: prefer a session grant, falling back to one-shot.
-- `allow_always`: prefer the daemon's durable grant (`allow_always`, or a
-  scoped grant with its `allow_always_scope`), so the same destination/entity
-  stops prompting; falls back to session, then one-shot.
+Choose an approval policy based on how you deploy the API:
+
+1. **Public / Shared Host (Restricted, OpenAI-like)**:
+   ```bash
+   MUSE2API_APPROVAL_POLICY=deny
+   MUSE2API_KEY=your-secret-key
+   ```
+   **Recommended if untrusted callers can access the endpoint.** Whenever the
+   agent asks to access an external website, upload files, or trigger connector
+   actions, the bridge immediately denies the request. The model fails fast with
+   a polite refusal ("I cannot access that resource") rather than hanging for 5
+   minutes, acting strictly like a standard sandboxed LLM without giving callers
+   arbitrary network or tool capabilities on your account.
+
+2. **Private / Self-Hosted (Full Agent Capabilities)**:
+   ```bash
+   MUSE2API_APPROVAL_POLICY=settings   # follows your muse.ai web UI toggles
+   # or
+   MUSE2API_APPROVAL_POLICY=allow_always  # creates durable domain grants
+   ```
+   **Recommended for personal use.** Permitted actions are approved
+   automatically so complex multi-step tasks (web searches, downloads,
+   connectors) finish seamlessly without manual clicks.
+
+### Policy reference
+
+- `off` (default): never answer prompts; the upstream turn waits for a human
+  in the web UI or times out.
+- `deny`: immediately refuse prompts. Best for public endpoints to prevent
+  unauthorized egress while avoiding turn timeouts.
 - `settings`: read the account's own permission settings (`/permissions/settings`
-  and `/permissions/active`) and follow them. `allow` (including the
-  `auto_allow` defaults and connector/action overrides) becomes a session
-  grant; `deny`/`off` becomes a refusal; a resolved `ask` cannot reach a human
-  here, so `MUSE2API_APPROVAL_ASK` answers it instead (`allow_once` by default).
-  Settings are read per connection and cached for 60 s.
-- `deny`: refuse, letting the assistant report the refusal.
+  and `/permissions/active`) and follow them. `allow` (including `auto_allow`
+  defaults and connector/action overrides) becomes a session grant; `deny`/`off`
+  becomes a refusal; a resolved `ask` falls back to `MUSE2API_APPROVAL_ASK`
+  (`allow_once` by default). Settings are cached for 60 s per connection.
+- `allow_once`: approve the weakest one-shot option offered (`allow_once`,
+  `allow_today`, `allow_for_this_task`, ...).
+- `allow_session`: grant session access for the waiting thread.
+- `allow_always`: accept the daemon's durable grant with its scope
+  (`destination_domain`, `entity`, `connector_all_actions`), preventing future
+  prompts for that destination.
+
+*Note on resetting approvals:* In the muse.ai web UI, clicking **Reset approvals to defaults**
+removes all website and connector overrides. Future actions will strictly follow your
+configured defaults (e.g. Always ask vs Ask for some actions).
 
 Only approvals whose `scope.thread_id` (or `scope.session_scope_id`) matches the
-current chat are touched (thread mode, the default). Account-wide HITL
-settings, connector OAuth consent, and the `/api/consent/status` web flow are
-read by `settings` but never modified; connector setup still requires the
-browser. `allow_always` does create upstream durable grants for the scopes the
-daemon offers (destination, domain, connector, recipient), which survive
-restarts. Auto-approval is security-sensitive: enable it only for an account
-whose data and network access you are willing to expose to the model.
+current chat are touched. Account-wide HITL settings, connector OAuth consent,
+and the `/api/consent/status` web flow are read by `settings` but never
+modified.
 
 ## Media URLs
 
@@ -316,14 +352,13 @@ random headers:
   declared schema. Auto / required / forced `tool_choice` are honoured for both
   `/v1/chat/completions` and `/v1/responses`, including `function_call` output
   items and `function_call_arguments` streaming.
-- **Video is account/region gated.** When muse refuses ("not available for your
-  account in your country or region"), the task fails with
-  `code: "video_unavailable_region"`, a stable `error`, and the model's prose
-  under `upstream_message`. The server then remembers the refusal for six hours
-  and rejects new `/v1/videos` calls immediately with HTTP 503 instead of
-  launching another doomed generation. The block is stored in
-  `.muse-state/video_block.json` and applies to the whole pool; delete that file
-  if you add an account from a supported region.
+- **Video is account- and region-gated upstream by muse.ai.** Video generation
+  is restricted by muse.ai to specific accounts and eligible regions. If your account
+  does not have video access, muse returns a regional refusal. To avoid repeated
+  timeouts on doomed tasks, the bridge caches this refusal and fails fast with
+  HTTP 503 (`video_unavailable_region`). If your account has video access, it
+  generates normally. To clear the cached refusal or retest immediately, delete
+  `.muse-state/video_block.json` or set `MUSE_VIDEO_BLOCK_SECONDS=0`.
 - **Video/image tasks are persisted, not resumable.** Task ids and results live
   in `.muse-state/tasks.json`, so polling survives a restart; a task that was
   queued or running when the process stopped is marked `failed` on startup

@@ -5,10 +5,16 @@ import asyncio
 import logging
 import sys
 
-from .chat import ChatService, session_key
-from .config import Settings
-from .pool import AccountPool
-from .protocol import ProtocolConfig
+try:
+    from .chat import ChatService, session_key
+    from .config import Settings
+    from .pool import AccountPool
+    from .protocol import ProtocolConfig
+except ImportError:
+    from muse2api.chat import ChatService, session_key
+    from muse2api.config import Settings
+    from muse2api.pool import AccountPool
+    from muse2api.protocol import ProtocolConfig
 
 
 async def _ping(settings: Settings) -> int:
@@ -90,8 +96,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "chat":
         return asyncio.run(_chat(settings, args.prompt, args.session))
     if args.command == "discover":
-        from .discover import discover as run_discover
-        from .discover import summarize
+        try:
+            from .discover import discover as run_discover
+            from .discover import summarize
+        except ImportError:
+            from muse2api.discover import discover as run_discover
+            from muse2api.discover import summarize
 
         print(summarize(run_discover(
             offline=args.offline,
@@ -105,7 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         import uvicorn
 
-        from .server import create_app
+        try:
+            from .server import create_app
+        except ImportError:
+            from muse2api.server import create_app
 
         if args.host:
             settings.host = args.host
