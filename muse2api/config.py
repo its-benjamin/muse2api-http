@@ -72,7 +72,14 @@ class Settings:
         return cls(
             host=os.environ.get("MUSE2API_HOST", "127.0.0.1"),
             port=int(os.environ.get("MUSE2API_PORT", "18610")),
-            api_key=os.environ.get("MUSE2API_KEY") or None,
+            api_key=(
+                os.environ.get("MUSE2API_KEY")
+                or os.environ.get("MODEL_API_KEY")
+                or os.environ.get("META_API_KEY")
+                or os.environ.get("META_MODEL_API_KEY")
+                or os.environ.get("IMAGE_GATEWAY_TOKEN")
+                or None
+            ),
             model=os.environ.get("MUSE_MODEL", "muse-spark"),
             timezone=os.environ.get("MUSE_TIMEZONE", "UTC"),
             cookies_file=os.environ.get("MUSE_COOKIE_FILE", "cookies_muse.txt"),

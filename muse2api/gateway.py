@@ -256,49 +256,67 @@ class HatchConnection:
                 **({"proxy": proxy} if proxy else {}),
             )
             ws_client = own_client
-        try:
-            from curl_cffi import WebSocketRetryStrategy
+        max_attempts = 4
+        backoff = 1.0
+        for attempt in range(1, max_attempts + 1):
+            try:
+                from curl_cffi import WebSocketRetryStrategy
 
-            ws_headers = get_ws_headers(impersonate)
-            if user_agent:
-                ws_headers["User-Agent"] = user_agent
-            ws = await ws_client.ws_connect(
-                url,
-                headers=ws_headers,
-                timeout=timeout,
-                impersonate=impersonate,
-                max_message_size=16 * 1024 * 1024,
-                ws_retry=WebSocketRetryStrategy(retry=True, count=3),
-                **({"proxy": proxy} if proxy else {}),
-            )
-            log.debug("websocket via curl_cffi (%s fingerprint)", impersonate)
-        except Exception as exc:  # noqa: BLE001 - stdlib fallback is opt-in
-            if not ws_fallback:
-                if own_client is not None:
-                    await own_client.close()
-                raise GatewayError(
-                    "curl_cffi websocket failed; refusing the stdlib fallback "
-                    f"because it leaks a different TLS fingerprint (set "
-                    f"MUSE_WS_FALLBACK=1 to allow it): {exc}"
-                ) from exc
-            log.warning("curl_cffi websocket failed (%s); using websockets", exc)
-            fallback_ua = user_agent or (
-                FIREFOX_BROWSER_UA if "firefox" in (impersonate or "").lower() else CHROME_BROWSER_UA
-            )
-            ws_headers = get_ws_headers(impersonate)
-            ws = await ws_connect(
-                url,
-                origin=ws_headers["Origin"],
-                user_agent_header=fallback_ua,
-                additional_headers={
-                    key: value for key, value in ws_headers.items()
-                    if key not in ("Origin", "User-Agent")
-                },
-                max_size=None,
-                open_timeout=timeout,
-                ping_interval=20,
-                ping_timeout=20,
-            )
+                ws_headers = get_ws_headers(impersonate)
+                if user_agent:
+                    ws_headers["User-Agent"] = user_agent
+                ws = await ws_client.ws_connect(
+                    url,
+                    headers=ws_headers,
+                    timeout=timeout,
+                    impersonate=impersonate,
+                    max_message_size=16 * 1024 * 1024,
+                    ws_retry=WebSocketRetryStrategy(retry=True, count=3),
+                    **({"proxy": proxy} if proxy else {}),
+                )
+                log.debug("websocket via curl_cffi (%s fingerprint)", impersonate)
+                break
+            except Exception as exc:  # noqa: BLE001 - stdlib fallback is opt-in
+                is_transient = (
+                    any(code in str(exc) for code in ("502", "503", "504", "Bad Gateway", "Refused WebSocket upgrade"))
+                    or isinstance(exc, (ConnectionResetError, ConnectionRefusedError))
+                )
+                if attempt < max_attempts and is_transient:
+                    log.info(
+                        "curl_cffi websocket upgrade returned %s (attempt %d/%d); retrying in %.1fs",
+                        exc, attempt, max_attempts, backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 1.5, 3.0)
+                    continue
+
+                if not ws_fallback:
+                    if own_client is not None:
+                        await own_client.close()
+                    raise GatewayError(
+                        "curl_cffi websocket failed; refusing the stdlib fallback "
+                        f"because it leaks a different TLS fingerprint (set "
+                        f"MUSE_WS_FALLBACK=1 to allow it): {exc}"
+                    ) from exc
+                log.warning("curl_cffi websocket failed (%s); using websockets", exc)
+                fallback_ua = user_agent or (
+                    FIREFOX_BROWSER_UA if "firefox" in (impersonate or "").lower() else CHROME_BROWSER_UA
+                )
+                ws_headers = get_ws_headers(impersonate)
+                ws = await ws_connect(
+                    url,
+                    origin=ws_headers["Origin"],
+                    user_agent_header=fallback_ua,
+                    additional_headers={
+                        key: value for key, value in ws_headers.items()
+                        if key not in ("Origin", "User-Agent")
+                    },
+                    max_size=None,
+                    open_timeout=timeout,
+                    ping_interval=20,
+                    ping_timeout=20,
+                )
+                break
         if own_client is not None:
             # The connection owns the dedicated session only when the caller
             # did not supply a shared one; keep a reference for cleanup.

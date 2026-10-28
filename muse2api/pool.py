@@ -74,6 +74,9 @@ class Account:
             cooldown = max(cooldown, 180.0)
         elif self.last_status and self.last_status >= 500:
             self.error_kind = "upstream"
+            cooldown = min(cooldown, 10.0)
+        elif self.error_kind == "network":
+            cooldown = min(cooldown, 10.0)
         self.cooldown_until = time.monotonic() + cooldown
         log.warning("account %s unhealthy for %.0fs (%s): %s",
                     self.name, cooldown, self.error_kind, error)
@@ -136,18 +139,37 @@ class AccountPool:
         if account.conn is not None and not account.conn.is_closed and account.session is not None:
             return account, account.session, account.conn
         session = await account.http.bootstrap()
-        conn = await HatchConnection.connect(
-            session,
-            lb_host=self.protocol.lb_host,
-            ws_path=self.protocol.ws_path,
-            cvm_rv_key=self.settings.cvm_rv_key,
-            attestation_cmd=self.settings.attestation_cmd,
-            ws_client=account.http.client,
-            impersonate=self.settings.impersonate,
-            user_agent=self.settings.user_agent,
-            proxy=self.settings.proxy,
-            ws_fallback=self.settings.ws_fallback,
-        )
+        try:
+            conn = await HatchConnection.connect(
+                session,
+                lb_host=self.protocol.lb_host,
+                ws_path=self.protocol.ws_path,
+                cvm_rv_key=self.settings.cvm_rv_key,
+                attestation_cmd=self.settings.attestation_cmd,
+                ws_client=account.http.client,
+                impersonate=self.settings.impersonate,
+                user_agent=self.settings.user_agent,
+                proxy=self.settings.proxy,
+                ws_fallback=self.settings.ws_fallback,
+            )
+        except Exception as exc:
+            log.warning(
+                "gateway connection failed for %s (%s); retrying with fresh bootstrap",
+                account.name, exc,
+            )
+            session = await account.http.bootstrap(force=True)
+            conn = await HatchConnection.connect(
+                session,
+                lb_host=self.protocol.lb_host,
+                ws_path=self.protocol.ws_path,
+                cvm_rv_key=self.settings.cvm_rv_key,
+                attestation_cmd=self.settings.attestation_cmd,
+                ws_client=account.http.client,
+                impersonate=self.settings.impersonate,
+                user_agent=self.settings.user_agent,
+                proxy=self.settings.proxy,
+                ws_fallback=self.settings.ws_fallback,
+            )
         account.conn = conn
         account.session = session
         return account, session, conn

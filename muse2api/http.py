@@ -335,6 +335,8 @@ class MuseHTTP:
             info = await self._wait_running(vm_id, time.monotonic() + 45.0)
             vm_id = info.get("vm_id", vm_id)
             endpoint = info.get("endpoint_url", endpoint)
+            # Settle window after waking so the VM's noise listener binds before upgrade
+            await asyncio.sleep(1.5)
 
         try:
             token_resp = await self.request_json(

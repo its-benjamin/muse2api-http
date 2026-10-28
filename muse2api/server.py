@@ -30,7 +30,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -151,7 +151,11 @@ def classify_image_error(text: str) -> str:
     lowered = text.lower()
     if any(h in lowered for h in ("policy", "safety", "guideline", "violate", "real people", "depicting real")):
         return "image_policy_violation"
-    if any(h in lowered for h in ("unavailable", "failed after multiple attempts", "no image was created")):
+    if any(h in lowered for h in (
+        "unavailable", "failed after multiple attempts", "no image was created",
+        "couldn't generate", "could not generate", "unable to generate",
+        "unable to create", "couldn't create", "could not create", "cannot generate", "can't generate",
+    )):
         return "image_tool_unavailable"
     if any(h in lowered for h in ("quota", "credits", "limit", "out of credits")):
         return "image_quota_exhausted"
@@ -160,6 +164,8 @@ def classify_image_error(text: str) -> str:
 MODEL_ALIASES = {
     "muse-spark",
     "muse",
+    "muse-image-1.0",
+    "muse-image",
     "gpt-4o",
     "gpt-4o-mini",
     "gpt-4.1",
@@ -167,6 +173,17 @@ MODEL_ALIASES = {
     "claude-sonnet-4",
     "claude-3-5-sonnet",
     "deepseek-chat",
+    "gpt-image-2",
+    "gpt-image-2-medium",
+    "gpt-image-2.5-flare",
+    "gpt-image-2.5-sunburst",
+    "dall-e-3",
+    "dall-e-2",
+    "flux-2",
+    "flux-2-pro",
+    "flux-2/klein/9b",
+    "fal-ai/flux-2/klein/9b",
+    "fal-ai/flux-2-pro",
 }
 
 
@@ -224,6 +241,8 @@ async def reference_image_item(value: Any) -> dict[str, Any] | None:
     encoded: str | None = None
     mime: str | None = None
     if isinstance(value, dict):
+        if value.get("type") == "image" and value.get("data_base64"):
+            return value
         raw_url = value.get("url")
         if isinstance(raw_url, str) and raw_url.startswith(("http://", "https://")):
             url = raw_url
@@ -435,19 +454,74 @@ def sse(data: Any) -> str:
 def image_size_to_aspect(size: str | None) -> str:
     if not size:
         return "1:1"
-    if ":" in size and "x" not in size:
-        return size
+    lowered = str(size).strip().lower()
     mapping = {
+        "landscape": "16:9",
+        "landscape_16_9": "16:9",
+        "16:9": "16:9",
+        "1792x1024": "16:9",
+        "1344x768": "16:9",
+        "1536x1024": "16:9",
+        "landscape_4_3": "4:3",
+        "4:3": "4:3",
+        "1024x768": "4:3",
+        "1152x864": "4:3",
+        "portrait": "9:16",
+        "portrait_16_9": "9:16",
+        "9:16": "9:16",
+        "1024x1792": "9:16",
+        "768x1344": "9:16",
+        "1024x1536": "9:16",
+        "portrait_4_3": "3:4",
+        "3:4": "3:4",
+        "768x1024": "3:4",
+        "864x1152": "3:4",
+        "square": "1:1",
+        "square_hd": "1:1",
+        "1:1": "1:1",
         "1024x1024": "1:1",
         "512x512": "1:1",
         "256x256": "1:1",
-        "1792x1024": "16:9",
-        "1024x1792": "9:16",
-        "1344x768": "16:9",
-        "768x1344": "9:16",
     }
-    return mapping.get(size, size if ":" in size else "1:1")
+    if lowered in mapping:
+        return mapping[lowered]
+    if ":" in lowered and "x" not in lowered:
+        return lowered
+    if "x" in lowered:
+        parts = lowered.split("x", maxsplit=1)
+        try:
+            w, h = float(parts[0]), float(parts[1])
+            if h > 0:
+                ratio = w / h
+                if 0.85 <= ratio <= 1.15:
+                    return "1:1"
+                if ratio > 1.0:
+                    return "4:3" if abs(ratio - 4 / 3) < abs(ratio - 16 / 9) else "16:9"
+                inv = h / w
+                return "3:4" if abs(inv - 4 / 3) < abs(inv - 16 / 9) else "9:16"
+        except (ValueError, TypeError):
+            pass
+    return "1:1"
 
+
+def extract_reference_images(body: dict[str, Any]) -> list[Any]:
+    refs: list[Any] = []
+    for key in ("image_url", "image", "reference_image"):
+        val = body.get(key)
+        if val is not None and val not in refs:
+            if isinstance(val, str) and val.strip():
+                refs.append(val.strip())
+            elif isinstance(val, dict):
+                refs.append(val)
+    for key in ("reference_image_urls", "reference_images", "input_references", "image_urls"):
+        val = body.get(key)
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, str) and item.strip() and item.strip() not in refs:
+                    refs.append(item.strip())
+                elif isinstance(item, dict) and item not in refs:
+                    refs.append(item)
+    return refs
 
 class TaskStore:
     def __init__(self, path: Path | None = None) -> None:
@@ -1206,22 +1280,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def _generate_images(prompt: str, n: int, size: str, response_format: str,
                                model: str, timeout: float,
-                               reference_image: str | None = None) -> dict:
+                               reference_image: str | None = None,
+                               reference_images: list[Any] | None = None) -> dict:
         aspect = image_size_to_aspect(size)
-        instruction = (
-            f"Generate {max(1, n)} image(s) with aspect ratio {aspect} for the following request. "
-            "Use your image generation tool now, do not ask questions.\n\n" + prompt
-        )
+        all_refs = list(reference_images or [])
+        if reference_image and reference_image not in all_refs:
+            all_refs.insert(0, reference_image)
+
         items = None
-        if reference_image:
-            instruction = (
-                "Edit/transform the attached reference image according to this request. "
-                "Use your image editing tool now, do not ask questions.\n\n" + prompt
-            )
-            item = await reference_image_item(reference_image)
-            if item is None:
+        if all_refs:
+            resolved = []
+            for ref in all_refs:
+                item = await reference_image_item(ref)
+                if item is not None:
+                    resolved.append(item)
+            if not resolved:
                 raise ApiError("reference image is empty", code="invalid_image")
-            items = [item, {"type": "text", "text": instruction}]
+            instruction = (
+                f"Edit and transform the attached reference image(s) according to this request with aspect ratio {aspect}. "
+                "If the request mentions a specific character, fictional figure, or distinct subject and you are confused or unsure what they look like, "
+                "search the web first for their canonical visual appearance (hair style/color, eyes, facial features, costume/outfit, signature traits, art style) "
+                "so you do not imagine or guess canonical details incorrectly. "
+                "Use your image editing tool now to produce the result. Do not ask questions.\n\n" + prompt
+            )
+            items = [*resolved, {"type": "text", "text": instruction}]
+        else:
+            instruction = (
+                f"Generate {max(1, n)} image(s) with aspect ratio {aspect} for the following request. "
+                "If the request features a specific character, fictional figure, or distinct subject and you are confused or unsure what they look like, "
+                "search the web first for their canonical visual appearance (hair style/color, eyes, facial features, costume/outfit, signature accessories, and art style) "
+                "before generating so you do not guess or imagine canonical details incorrectly. "
+                "Then use your image generation tool now to produce the image with accurate visual fidelity. Do not ask questions.\n\n" + prompt
+            )
         async with app.state.sem:
             result = await app.state.chat.run_with_media(
                 instruction, kind="image", timeout=timeout, items=items
@@ -1230,7 +1320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not images:
             code = classify_image_error(result.text or "")
             raise ApiError(
-                result.text or "muse did not return an image",
+                result.text or ("muse did not return an edited image" if all_refs else "muse did not return an image"),
                 status=400 if "policy" in code else 502,
                 type_="invalid_request_error" if "policy" in code else "upstream_error",
                 code=code,
@@ -1272,25 +1362,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         n = int_field(body, "n", default=1, minimum=1, maximum=10)
         size = str(body.get("size") or "1024x1024")
         response_format = str(body.get("response_format") or "url")
-        reference_image = body.get("reference_image")
+        refs = extract_reference_images(body)
         return await _generate_images(
             prompt.strip(), n, size, response_format,
             openai_model(body.get("model"), settings.model),
             float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240")),
-            reference_image=reference_image if isinstance(reference_image, str) else None,
+            reference_images=refs if refs else None,
         )
 
     @app.post("/v1/images/edits")
-    async def images_edits(
-        request: Request,
-        image: UploadFile = File(...),
-        prompt: str = Form(...),
-        size: str = Form("1024x1024"),
-        response_format: str = Form("url"),
-        model: str = Form(""),
-        n: int = Form(1),
-    ):
+    async def images_edits(request: Request):
         check_auth(request)
+        content_type = request.headers.get("content-type", "").lower()
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+            except Exception:
+                raise ApiError("invalid JSON body") from None
+            prompt = body.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                raise ApiError("prompt is required")
+            n = int_field(body, "n", default=1, minimum=1, maximum=10)
+            size = str(body.get("size") or "1024x1024")
+            response_format = str(body.get("response_format") or "url")
+            refs = extract_reference_images(body)
+            if not refs:
+                raise ApiError("image is required", code="invalid_image")
+            return await _generate_images(
+                prompt.strip(), n, size, response_format,
+                openai_model(body.get("model"), settings.model),
+                float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240")),
+                reference_images=refs,
+            )
+
+        form = await request.form()
+        image = form.get("image")
+        prompt = form.get("prompt")
+        size = str(form.get("size") or "1024x1024")
+        response_format = str(form.get("response_format") or "url")
+        model = str(form.get("model") or "")
+        n = 1
+        try:
+            raw_n = form.get("n", 1)
+            if raw_n is not None:
+                n = max(1, min(10, int(raw_n)))
+        except (ValueError, TypeError):
+            pass
+
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ApiError("prompt is required")
+        if not hasattr(image, "read"):
+            raise ApiError("image is required", code="invalid_image")
+
         raw = await image.read(MAX_MEDIA_BYTES + 1)
         if not raw:
             raise ApiError("image is empty")
@@ -1300,45 +1423,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status=413,
                 code="invalid_image",
             )
-        mime = image.content_type or mimetypes.guess_type(image.filename or "")[0] or "image/png"
+        mime = getattr(image, "content_type", None) or mimetypes.guess_type(getattr(image, "filename", "") or "")[0] or "image/png"
         item = {
             "type": "image",
             "mime_type": mime,
             "data_base64": base64.b64encode(raw).decode("ascii"),
-            "filename": image.filename or "image.png",
+            "filename": getattr(image, "filename", "") or "image.png",
         }
-        instruction = (
-            "Edit the attached image according to this request. Use your image editing tool now, "
-            "do not ask questions.\n\n" + prompt.strip()
+        return await _generate_images(
+            prompt.strip(), n, size, response_format,
+            openai_model(model, settings.model),
+            float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240")),
+            reference_images=[item],
         )
-        async with app.state.sem:
-            result = await app.state.chat.run_with_media(
-                instruction,
-                kind="image",
-                timeout=float(os.environ.get("MUSE_IMAGE_TIMEOUT", "240")),
-                items=[item, {"type": "text", "text": instruction}],
-            )
-        images = [ref for ref in result.media if ref.kind == "image"]
-        if not images:
-            code = classify_image_error(result.text or "")
-            raise ApiError(
-                result.text or "muse did not return an edited image",
-                status=400 if "policy" in code else 502,
-                type_="invalid_request_error" if "policy" in code else "upstream_error",
-                code=code,
-            )
-        _account, _session, conn = await app.state.pool.connect()
-        try:
-            ref = images[-1]
-            raw_out = await download_media(conn, ref, proxy=app.state.pool.settings.proxy)
-        finally:
-            await conn.close()
-        name = app.state.media.save(raw_out, ref.extension)
-        entry: dict[str, Any] = {"revised_prompt": ref.label or prompt, "kind": "image",
-                                 "bytes": len(raw_out)}
-        entry["b64_json"] = base64.b64encode(raw_out).decode("ascii")
-        entry["url"] = app.state.media.url_for(name)
-        return {"created": int(time.time()), "data": [entry]}
 
     # ------------------------------------------------------------------ videos
 
@@ -1472,9 +1569,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             task["status"] = "running"
             task["progress"] = 5
             try:
-                reference_image = body.get("reference_image")
-                result = await _generate_images(prompt.strip(), n, size, response_format, model, timeout,
-                                               reference_image=reference_image if isinstance(reference_image, str) else None)
+                refs = extract_reference_images(body)
+                result = await _generate_images(
+                    prompt.strip(), n, size, response_format, model, timeout,
+                    reference_images=refs if refs else None,
+                )
                 task["status"] = "succeeded"
                 task["progress"] = 100
                 task["result"] = result

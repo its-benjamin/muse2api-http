@@ -543,7 +543,16 @@ class ChatService:
                     media_stable_at = time.monotonic()
                 else:
                     media_stable_at = None
-                    if text_stable_at is not None and time.monotonic() - text_stable_at > 4.0:
+                    is_searching = any(
+                        kw in current_text.lower()
+                        for kw in (
+                            "search", "looking", "checking", "finding", "reference",
+                            "appearance", "generating", "creating", "drawing",
+                            "rendering", "browse", "wait", "inspect", "query",
+                        )
+                    )
+                    settle_limit = 35.0 if is_searching else 15.0
+                    if text_stable_at is not None and time.monotonic() - text_stable_at > settle_limit:
                         # Text settled and no artifact arrived; surface what we have promptly.
                         return best, best_id, captured, media
             elif (text_stable_at is not None
