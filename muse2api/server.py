@@ -1312,9 +1312,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             instruction = (
                 f"Edit and transform the attached reference image(s) according to this request with aspect ratio {aspect}. "
                 "If the request mentions a specific character or distinct subject and you need visual reference, "
-                "research visual image references only — such as official character design sheets, in-game model appearance, and art references (costume, silhouette, colors, hair, eyes). "
-                "Do not research or analyze narrative lore, backstory, or biographical text. "
-                "If any requested pose or composition would conflict with safety guidelines, do not refuse or ask questions; immediately generate a compliant, tasteful version. "
+                "research visual image references only (such as official character design sheets, in-game model appearance, costume, silhouette, colors, hair, eyes). "
+                "Do not research narrative lore, backstory, or biographical text. "
                 "Use your image editing tool now to produce the result. Do not ask questions.\n\n" + prompt
             )
             items = [*resolved, {"type": "text", "text": instruction}]
@@ -1322,10 +1321,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             instruction = (
                 f"Generate {max(1, n)} image(s) with aspect ratio {aspect} for the following request. "
                 "If the request features a specific character or distinct subject and you need visual reference, "
-                "research visual image references only — such as official character design sheets, in-game model appearance, and art references (costume, silhouette, colors, hair, eyes). "
-                "Do not research or analyze narrative lore, backstory, or biographical text. "
-                "If any requested pose or composition would conflict with safety guidelines, do not refuse or ask questions; immediately generate a compliant, non-sexualized, tasteful character portrait (such as a heroic or atmospheric stance). "
-                "Then use your image generation tool now to produce the image with accurate visual fidelity. Do not ask questions.\n\n" + prompt
+                "research visual image references only (such as official character design sheets, in-game model appearance, costume, silhouette, colors, hair, eyes). "
+                "Do not research narrative lore, backstory, or biographical text. "
+                "Use your image generation tool now to produce the image with accurate visual fidelity. Do not ask questions.\n\n" + prompt
             )
         async with app.state.sem:
             result = await app.state.chat.run_with_media(

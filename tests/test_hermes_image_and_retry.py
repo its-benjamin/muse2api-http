@@ -179,7 +179,10 @@ def test_image_instruction_allows_search_when_unsure(tmp_path, monkeypatch):
     inst = captured_instructions[0]
     assert "aspect ratio 16:9" in inst
     assert "research visual image references only" in inst
-    assert "Do not research or analyze narrative lore" in inst
+    assert "Do not research narrative lore" in inst
+    assert "non-sexualized" not in inst
+    assert "tasteful" not in inst
+    assert "heroic" not in inst
 
 
 def test_refusal_detection_vindicta():
