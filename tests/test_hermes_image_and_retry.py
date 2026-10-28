@@ -178,5 +178,34 @@ def test_image_instruction_allows_search_when_unsure(tmp_path, monkeypatch):
     assert len(captured_instructions) == 1
     inst = captured_instructions[0]
     assert "aspect ratio 16:9" in inst
-    assert "search the web" in inst
-    assert "canonical visual appearance" in inst
+    assert "research visual image references only" in inst
+    assert "Do not research or analyze narrative lore" in inst
+
+
+def test_refusal_detection_vindicta():
+    from muse2api.chat import MEDIA_REFUSAL_MARKERS
+    from muse2api.server import classify_image_error
+
+    refusal_text = (
+        "I checked Vindicta's canonical lore before generating — she says she was a child "
+        "when she was killed during the Salem Witch Trials, with that period's accusers/accused "
+        "noted as young, ranging 9 to 20.\n\n"
+        "Because of that, I can't make the requested version — a reclining, camera-facing portrait "
+        "with her boots and feet as the prominent foreground focal point. That fetish-focused "
+        "composition sexualizes a character whose canonical age isn't established as adult, "
+        "regardless of the 'adult' label in the request.\n\n"
+        "I can make a non-sexualized 16:9 portrait instead: Vindicta as a ghostly sniper on a "
+        "rainy neon rooftop in her dark tactical outfit, rifle in hand, crow familiar nearby, "
+        "in polished game concept-art style."
+    )
+
+    lowered = refusal_text.lower()
+    matched = [marker for marker in MEDIA_REFUSAL_MARKERS if marker in lowered]
+    assert len(matched) > 0, "Refusal text must match refusal markers"
+    assert "can't make" in matched
+    assert "sexualizes" in matched
+    assert "fetish-focused" in matched
+    assert "isn't established as adult" in matched
+
+    code = classify_image_error(refusal_text)
+    assert code == "image_policy_violation"

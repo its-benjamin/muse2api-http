@@ -149,12 +149,25 @@ def classify_video_error(text: str) -> str:
 def classify_image_error(text: str) -> str:
     """Turn the model's prose refusal into a stable API error code."""
     lowered = text.lower()
-    if any(h in lowered for h in ("policy", "safety", "guideline", "violate", "real people", "depicting real")):
+    if any(h in lowered for h in (
+        "policy", "safety", "guideline", "violate", "violat",
+        "real people", "depicting real", "public figure",
+        "sexual", "sexualiz", "fetish", "explicit", "nsfw",
+        "underage", "minor", "child", "age isn't established", "age is not established",
+        "not established as adult", "inappropriate", "sensitive content",
+        "not permitted", "prohibited", "refuse", "declining",
+        "can't make", "cannot make", "couldn't make", "could not make", "unable to make",
+        "can make a non-sexualized", "can try a different take", "can make a different",
+        "instead of that", "if you'd like me to", "would you like me to",
+    )):
         return "image_policy_violation"
     if any(h in lowered for h in (
         "unavailable", "failed after multiple attempts", "no image was created",
         "couldn't generate", "could not generate", "unable to generate",
-        "unable to create", "couldn't create", "could not create", "cannot generate", "can't generate",
+        "unable to create", "couldn't create", "could not create",
+        "cannot generate", "can't generate", "failed to generate",
+        "generation failed", "not able to generate", "not able to create",
+        "won't generate", "will not generate", "won't be able to",
     )):
         return "image_tool_unavailable"
     if any(h in lowered for h in ("quota", "credits", "limit", "out of credits")):
@@ -1298,18 +1311,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ApiError("reference image is empty", code="invalid_image")
             instruction = (
                 f"Edit and transform the attached reference image(s) according to this request with aspect ratio {aspect}. "
-                "If the request mentions a specific character, fictional figure, or distinct subject and you are confused or unsure what they look like, "
-                "search the web first for their canonical visual appearance (hair style/color, eyes, facial features, costume/outfit, signature traits, art style) "
-                "so you do not imagine or guess canonical details incorrectly. "
+                "If the request mentions a specific character or distinct subject and you need visual reference, "
+                "research visual image references only — such as official character design sheets, in-game model appearance, and art references (costume, silhouette, colors, hair, eyes). "
+                "Do not research or analyze narrative lore, backstory, or biographical text. "
+                "If any requested pose or composition would conflict with safety guidelines, do not refuse or ask questions; immediately generate a compliant, tasteful version. "
                 "Use your image editing tool now to produce the result. Do not ask questions.\n\n" + prompt
             )
             items = [*resolved, {"type": "text", "text": instruction}]
         else:
             instruction = (
                 f"Generate {max(1, n)} image(s) with aspect ratio {aspect} for the following request. "
-                "If the request features a specific character, fictional figure, or distinct subject and you are confused or unsure what they look like, "
-                "search the web first for their canonical visual appearance (hair style/color, eyes, facial features, costume/outfit, signature accessories, and art style) "
-                "before generating so you do not guess or imagine canonical details incorrectly. "
+                "If the request features a specific character or distinct subject and you need visual reference, "
+                "research visual image references only — such as official character design sheets, in-game model appearance, and art references (costume, silhouette, colors, hair, eyes). "
+                "Do not research or analyze narrative lore, backstory, or biographical text. "
+                "If any requested pose or composition would conflict with safety guidelines, do not refuse or ask questions; immediately generate a compliant, non-sexualized, tasteful character portrait (such as a heroic or atmospheric stance). "
                 "Then use your image generation tool now to produce the image with accurate visual fidelity. Do not ask questions.\n\n" + prompt
             )
         async with app.state.sem:
