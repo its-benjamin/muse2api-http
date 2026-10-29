@@ -17,6 +17,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -330,6 +331,21 @@ class ChatService:
         if self.approval_ask in {"off", "settings"}:
             self.approval_ask = "allow_once"
 
+    @asynccontextmanager
+    async def _connection(self):
+        if hasattr(self.pool, "connection") and callable(self.pool.connection):
+            async with self.pool.connection() as leased:
+                yield leased
+        else:
+            leased = await self.pool.connect()
+            account = leased[0] if leased else None
+            if account is not None and hasattr(account, "active_requests"):
+                account.active_requests += 1
+            try:
+                yield leased
+            finally:
+                if account is not None and hasattr(account, "active_requests"):
+                    account.active_requests = max(0, account.active_requests - 1)
     async def run(
         self,
         prompt: str,
@@ -387,49 +403,49 @@ class ChatService:
         items: list[dict] | None = None,
         refusal_markers: tuple[str, ...] = (),
     ) -> ChatResult:
-        _account, _session, conn = await self.pool.connect()
-        try:
-            await self._register_node(conn, state.node_id)
-            body = {
-                "items": items or [{"type": "text", "text": prompt}],
-                "message": prompt,
-                "node_id": state.node_id,
-                "capabilities": CAPABILITIES,
-                "session_id": state.session_id,
-                "timezone": self.settings.timezone,
-                "metadata": {"thread_is_dictation_used": False},
-            }
-            message_id = ""
+        async with self._connection() as (_account, _session, conn):
             try:
-                ack = await conn.ack("POST", self.protocol.route("chat.stream").path, body, timeout=20.0)
-                raw_id = ack.get("message_id") or ack.get("id")
-                if isinstance(raw_id, str):
-                    message_id = raw_id
-            except (TimeoutError, GatewayError) as exc:
-                log.debug("chat.stream ack unavailable (%s); falling back to history search", exc)
+                await self._register_node(conn, state.node_id)
+                body = {
+                    "items": items or [{"type": "text", "text": prompt}],
+                    "message": prompt,
+                    "node_id": state.node_id,
+                    "capabilities": CAPABILITIES,
+                    "session_id": state.session_id,
+                    "timezone": self.settings.timezone,
+                    "metadata": {"thread_is_dictation_used": False},
+                }
+                message_id = ""
+                try:
+                    ack = await conn.ack("POST", self.protocol.route("chat.stream").path, body, timeout=20.0)
+                    raw_id = ack.get("message_id") or ack.get("id")
+                    if isinstance(raw_id, str):
+                        message_id = raw_id
+                except (TimeoutError, GatewayError) as exc:
+                    log.debug("chat.stream ack unavailable (%s); falling back to history search", exc)
 
-            reply, reply_id, events, media = await self._poll_thread_reply(
-                conn,
-                state.session_id,
-                message_id=message_id,
-                prompt=prompt,
-                on_delta=on_delta,
-                timeout=timeout,
-                want_media=want_media,
-                refusal_markers=refusal_markers,
-            )
-            if not reply and not media:
-                raise GatewayError("muse returned an empty reply")
-            return ChatResult(
-                text=reply,
-                message_id=reply_id or message_id or str(uuid.uuid4()),
-                events=events,
-                media=media,
-            )
-        except Exception:
-            # If the turn failed unexpectedly on this connection, mark closed so next turn reconnects
-            conn._closed.set()
-            raise
+                reply, reply_id, events, media = await self._poll_thread_reply(
+                    conn,
+                    state.session_id,
+                    message_id=message_id,
+                    prompt=prompt,
+                    on_delta=on_delta,
+                    timeout=timeout,
+                    want_media=want_media,
+                    refusal_markers=refusal_markers,
+                )
+                if not reply and not media:
+                    raise GatewayError("muse returned an empty reply")
+                return ChatResult(
+                    text=reply,
+                    message_id=reply_id or message_id or str(uuid.uuid4()),
+                    events=events,
+                    media=media,
+                )
+            except Exception:
+                # If the turn failed unexpectedly on this connection, mark closed so next turn reconnects
+                conn._closed.set()
+                raise
 
     async def _poll_thread_reply(
         self,
@@ -626,100 +642,100 @@ class ChatService:
         want_media: bool = False,
         items: list[dict] | None = None,
     ) -> ChatResult:
-        _account, _session, conn = await self.pool.connect()
-        client_id = str(uuid.uuid4())
-        queue: asyncio.Queue[Any] = asyncio.Queue()
+        async with self._connection() as (_account, _session, conn):
+            client_id = str(uuid.uuid4())
+            queue: asyncio.Queue[Any] = asyncio.Queue()
 
-        try:
-            await self._register_node(conn, client_id)
-            await self._register_capabilities(conn, client_id)
+            try:
+                await self._register_node(conn, client_id)
+                await self._register_capabilities(conn, client_id)
 
-            async def pump() -> None:
-                try:
-                    async for event in conn.stream(
-                        "POST",
-                        self.protocol.route("chat.subscribe").path,
-                        {
-                            "after_stream_seq": 0,
-                            "after_chat_event_seq": 0,
-                            "capabilities": CAPABILITIES,
-                        },
-                        reset_reason="chat done",
-                    ):
-                        await queue.put(event)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("subscribe stream ended: %s", exc)
+                async def pump() -> None:
+                    try:
+                        async for event in conn.stream(
+                            "POST",
+                            self.protocol.route("chat.subscribe").path,
+                            {
+                                "after_stream_seq": 0,
+                                "after_chat_event_seq": 0,
+                                "capabilities": CAPABILITIES,
+                            },
+                            reset_reason="chat done",
+                        ):
+                            await queue.put(event)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("subscribe stream ended: %s", exc)
 
-            pump_task = asyncio.create_task(pump())
-            await asyncio.sleep(0.4)  # let the subscribe attach
+                pump_task = asyncio.create_task(pump())
+                await asyncio.sleep(0.4)  # let the subscribe attach
 
-            send_start_ms = int(time.time() * 1000)
-            await conn.send(
-                "POST",
-                self.protocol.route("chat.stream").path,
-                {
-                    "message": prompt,
-                    "items": items or [{"type": "text", "text": prompt}],
-                    "node_id": client_id,
-                    "capabilities": CAPABILITIES,
-                    "timezone": self.settings.timezone,
-                },
-            )
+                send_start_ms = int(time.time() * 1000)
+                await conn.send(
+                    "POST",
+                    self.protocol.route("chat.stream").path,
+                    {
+                        "message": prompt,
+                        "items": items or [{"type": "text", "text": prompt}],
+                        "node_id": client_id,
+                        "capabilities": CAPABILITIES,
+                        "timezone": self.settings.timezone,
+                    },
+                )
 
-            parts: list[str] = []
-            deadline = time.monotonic() + timeout
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                try:
-                    event = await asyncio.wait_for(queue.get(), min(5.0, remaining))
-                except TimeoutError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                ts = event.get("ts_ms")
-                if isinstance(ts, (int, float)) and ts < send_start_ms:
-                    continue
-                name = str(event.get("event") or event.get("event_name") or "")
-                payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-                if name == "delta.text_append":
-                    text = _as_text(payload.get("text") or payload.get("delta"))
-                    if text:
-                        parts.append(text)
-                        if on_delta:
-                            on_delta(text)
-                elif name == "delta.message_done":
-                    if not parts:
-                        transcript = payload.get("transcript")
-                        if isinstance(transcript, dict):
-                            for message in transcript.get("messages") or []:
-                                for content in message.get("content") or []:
-                                    if content.get("type") == "text" and isinstance(content.get("text"), str):
-                                        parts.append(content["text"])
-                                        if on_delta:
-                                            on_delta(content["text"])
-                    break
-                elif name == "message.assistant":
-                    if not parts:
-                        text = event_text(event)
+                parts: list[str] = []
+                deadline = time.monotonic() + timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), min(5.0, remaining))
+                    except TimeoutError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    ts = event.get("ts_ms")
+                    if isinstance(ts, (int, float)) and ts < send_start_ms:
+                        continue
+                    name = str(event.get("event") or event.get("event_name") or "")
+                    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+                    if name == "delta.text_append":
+                        text = _as_text(payload.get("text") or payload.get("delta"))
                         if text:
                             parts.append(text)
                             if on_delta:
                                 on_delta(text)
-                    break
-            text = "".join(parts)
-            if not text:
-                raise GatewayError(f"muse returned an empty reply within {timeout:.0f}s")
-            return ChatResult(text=text, message_id=str(uuid.uuid4()))
-        finally:
-            try:
-                pump_task.cancel()  # type: ignore[possibly-undefined]
-            except Exception:
-                pass
-            await conn.close()
+                    elif name == "delta.message_done":
+                        if not parts:
+                            transcript = payload.get("transcript")
+                            if isinstance(transcript, dict):
+                                for message in transcript.get("messages") or []:
+                                     for content in message.get("content") or []:
+                                         if content.get("type") == "text" and isinstance(content.get("text"), str):
+                                             parts.append(content["text"])
+                                             if on_delta:
+                                                 on_delta(content["text"])
+                        break
+                    elif name == "message.assistant":
+                        if not parts:
+                            text = event_text(event)
+                            if text:
+                                parts.append(text)
+                                if on_delta:
+                                    on_delta(text)
+                        break
+                text = "".join(parts)
+                if not text:
+                    raise GatewayError(f"muse returned an empty reply within {timeout:.0f}s")
+                return ChatResult(text=text, message_id=str(uuid.uuid4()))
+            finally:
+                try:
+                    pump_task.cancel()  # type: ignore[possibly-undefined]
+                except Exception:
+                    pass
+                await conn.close()
 
     # -- preamble helpers --------------------------------------------------
 

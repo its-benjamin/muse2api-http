@@ -635,7 +635,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if key:
                     app.state.image_tasks[key] = task
         recover_interrupted_tasks(app.state.tasks)
-        app.state.sem = asyncio.Semaphore(int(os.environ.get("MUSE2API_CONCURRENCY", "2")))
+        concurrency_limit = pool.compute_concurrency()
+        app.state.sem = asyncio.Semaphore(concurrency_limit)
+        app.state.concurrency_limit = concurrency_limit
+        log.info(
+            "concurrency: %d total slots (%d account(s) in pool, %s mode)",
+            concurrency_limit,
+            len(pool.accounts),
+            "manual" if isinstance(settings.concurrency, int) and settings.concurrency > 0 else "smart/auto",
+        )
         app.state.locks = {}
         app.state.started_at = time.time()
         app.state.last_active_at = time.time()
@@ -821,7 +829,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": bool(primary and primary._cached_session is not None),
             "mode": settings.session_mode,
             "vm_id": primary._cached_session.vm_id if (primary and primary._cached_session) else None,
+            "concurrency": getattr(app.state, "concurrency_limit", pool.compute_concurrency() if pool else 2),
             "accounts": pool.status() if pool else [],
+            "proxy_pool": pool.proxy_status() if pool else [],
             "uptime_s": int(now - started),
             "idle_s": idle_s,
             "sleeping": is_sleeping,

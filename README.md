@@ -70,7 +70,10 @@ The gateway authenticates using cookies from your active [muse.ai](https://muse.
 1. Log in to [muse.ai](https://muse.ai) in your browser.
 2. Get your session cookie:
    - **Interactive prompt (Easiest):** If you launch the binary or CLI in a terminal without `cookies_muse.txt`, it will automatically prompt you to paste your cookie and save it for you.
-   - **Manual file:** Open DevTools (**F12** $ightarrow$ **Application** or **Storage** $ightarrow$ **Cookies** $ightarrow$ `https://muse.ai`), copy the value of `hatch_sess`, and save it to `cookies_muse.txt` as `hatch_sess=<value>`.
+   - **Manual file:** Open DevTools (**F12** $
+ightarrow$ **Application** or **Storage** $
+ightarrow$ **Cookies** $
+ightarrow$ `https://muse.ai`), copy the value of `hatch_sess`, and save it to `cookies_muse.txt` as `hatch_sess=<value>`.
    - **Full export:** Use a browser extension (such as *Get cookies.txt locally*) while on `muse.ai` and save the exported file as `cookies_muse.txt`.
 
 The server automatically rotates and persists refreshed session tokens in `.muse-state/`.
@@ -224,11 +227,33 @@ Generated URLs are relative by default. Set `MUSE2API_PUBLIC_BASE` (for example
 against the API host. The `/v1/media/{name}` route itself stays the same.
 
 ## Accounts
-
 `MUSE_COOKIE_FILES=a.txt,b.txt` (or repeated `MUSE_COOKIE_FILE`) enables the
 account pool. A failing login is put on a cooldown and the next healthy account
 is used; `/healthz` shows each account. A single file is the normal setup.
 
+### Smart concurrency scaling
+
+By default, concurrency scales dynamically with pool size: `concurrency = accounts * MUSE2API_CONCURRENCY_PER_ACCOUNT` (default: 2 per account).
+
+- 1 account: 2 concurrent execution slots.
+- 3 accounts: 6 concurrent execution slots.
+- In-flight requests are automatically routed to the least-loaded available account.
+- Set `MUSE2API_CONCURRENCY=<number>` to lock an absolute cap, or `auto` (default) to scale dynamically.
+
+### Proxy pool & per-account egress
+
+Configure multiple proxies to distribute traffic and isolate IP addresses across accounts:
+
+```bash
+MUSE_PROXIES="http://proxy1:8080,socks5://proxy2:1080,http://proxy3:8080"
+# or load from file:
+MUSE_PROXY_FILE="proxies.txt"
+MUSE_PROXY_STRATEGY=smart  # smart (fitness-aware), round-robin, random, fill-first
+```
+
+- **Smart fitness tracking:** Failing, timed-out, or rate-limited proxies are placed on a cooldown (`MUSE_PROXY_COOLDOWN`, default 300 s) before retrying.
+- **Per-account binding:** Each account is pinned to a dedicated proxy in the pool to prevent IP correlation, with automatic failover to the next healthy proxy if its current proxy fails.
+- `/healthz` reports real-time proxy pool fitness and usage.
 ### Cookies stay alive on their own
 
 muse.ai rotates its session cookies on use, so the export you start with is not
@@ -338,7 +363,12 @@ random headers:
 | `MUSE_TIMEZONE` | `UTC` | Timezone sent to the upstream agent |
 | `MUSE_SESSION_MODE` | `thread` | `thread` or `main` |
 | `MUSE_CHAT_TIMEOUT` | `300` | Reply deadline, seconds |
-| `MUSE2API_CONCURRENCY` | `2` | Concurrent upstream generations |
+| `MUSE2API_CONCURRENCY` | `auto` | Concurrent upstream generations (`auto` scales with accounts, or fixed integer) |
+| `MUSE2API_CONCURRENCY_PER_ACCOUNT` | `2` | Slots per account when `MUSE2API_CONCURRENCY=auto` |
+| `MUSE_PROXIES` | unset | Comma-separated proxy list for the egress proxy pool |
+| `MUSE_PROXY_FILE` | unset | File containing one proxy URL per line |
+| `MUSE_PROXY_STRATEGY` | `smart` | Proxy rotation strategy: `smart`, `round-robin`, `random`, or `fill-first` |
+| `MUSE_PROXY_COOLDOWN` | `300` | Cooldown seconds for failed/rate-limited proxies |
 | `MUSE_IMAGE_TIMEOUT` | `240` | Image generation deadline, seconds |
 | `MUSE_VIDEO_TIMEOUT` | `600` | Video generation deadline, seconds |
 | `MUSE_REQUEST_TIMEOUT` | `60` | Per-request upstream HTTP timeout |

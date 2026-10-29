@@ -86,8 +86,10 @@ def _cookie_cache_path(state_dir: Path, source: Path) -> Path:
 
 class MuseHTTP:
     def __init__(self, settings: Settings, cookies: dict[str, str] | None = None,
-                 cookie_path: str | Path | None = None) -> None:
+                 cookie_path: str | Path | None = None,
+                 proxy: str | None = None) -> None:
         self.settings = settings
+        self.proxy = proxy or settings.proxy
         self._cookie_source = Path(cookie_path) if cookie_path else Path(settings.cookies_file)
         self._cache_path = _cookie_cache_path(settings.state_dir, self._cookie_source)
         if cookies is None:
@@ -184,7 +186,7 @@ class MuseHTTP:
             max_clients=50,
             retry=2,
             cookies=self.jar.copy(),
-            **({"proxy": self.settings.proxy} if self.settings.proxy else {}),
+            **({"proxy": self.proxy or self.settings.proxy} if (self.proxy or self.settings.proxy) else {}),
         )
 
     @property
@@ -193,6 +195,11 @@ class MuseHTTP:
             self._client = self._create_client()
         return self._client
 
+    async def set_proxy(self, proxy: str | None) -> None:
+        """Update egress proxy, gracefully closing the existing client session."""
+        if proxy != self.proxy:
+            self.proxy = proxy
+            await self.close()
     async def close(self) -> None:
         if self._client is not None:
             try:
@@ -408,7 +415,7 @@ class MuseHTTP:
                 session,
                 ws_client=self.client,
                 impersonate=self.settings.impersonate,
-                proxy=self.settings.proxy,
+                proxy=self.proxy or self.settings.proxy,
                 ws_fallback=self.settings.ws_fallback,
             )
         except Exception:
@@ -418,7 +425,7 @@ class MuseHTTP:
                 session,
                 ws_client=self.client,
                 impersonate=self.settings.impersonate,
-                proxy=self.settings.proxy,
+                proxy=self.proxy or self.settings.proxy,
                 ws_fallback=self.settings.ws_fallback,
             )
         return session, conn

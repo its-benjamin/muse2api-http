@@ -65,6 +65,15 @@ class Settings:
     # Off by default: the stdlib websockets fallback runs on Python/OpenSSL and
     # therefore presents a different TLS fingerprint than the Chrome profile.
     ws_fallback: bool = False
+    # Concurrency: None or "auto" enables smart scaling based on pool size.
+    # An explicit integer sets a fixed total cap.
+    concurrency: int | str | None = None
+    concurrency_per_account: int = 2
+    # Proxy pool configuration
+    proxies: list[str] = field(default_factory=list)
+    proxy_file: str | None = None
+    proxy_strategy: str = "smart"
+    proxy_cooldown_seconds: float = 300.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -102,6 +111,32 @@ class Settings:
             user_agent=os.environ.get("MUSE_USER_AGENT") or None,
             proxy=os.environ.get("MUSE_PROXY") or None,
             ws_fallback=_env_bool("MUSE_WS_FALLBACK", False),
+            concurrency=(
+                int(os.environ["MUSE2API_CONCURRENCY"].strip())
+                if os.environ.get("MUSE2API_CONCURRENCY", "").strip().isdigit()
+                else (
+                    "auto"
+                    if os.environ.get("MUSE2API_CONCURRENCY", "").strip().lower() == "auto"
+                    else None
+                )
+            ),
+            concurrency_per_account=(
+                int(os.environ["MUSE2API_CONCURRENCY_PER_ACCOUNT"].strip())
+                if os.environ.get("MUSE2API_CONCURRENCY_PER_ACCOUNT", "").strip().isdigit()
+                else 2
+            ),
+            proxies=[
+                p.strip()
+                for p in (os.environ.get("MUSE_PROXIES") or "").replace(";", ",").split(",")
+                if p.strip()
+            ],
+            proxy_file=os.environ.get("MUSE_PROXY_FILE") or None,
+            proxy_strategy=os.environ.get("MUSE_PROXY_STRATEGY", "smart").strip().lower(),
+            proxy_cooldown_seconds=(
+                float(os.environ["MUSE_PROXY_COOLDOWN"].strip())
+                if os.environ.get("MUSE_PROXY_COOLDOWN", "").strip()
+                else 300.0
+            ),
         )
 
     def ensure_state_dir(self) -> Path:

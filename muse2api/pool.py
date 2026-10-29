@@ -12,6 +12,8 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from .cookies import parse_cookie_file
 from .gateway import GatewaySession, HatchConnection
 from .http import MuseAuthError, MuseHTTP
 from .protocol import ProtocolConfig
+from .proxy import ProxyPool
 
 log = logging.getLogger("muse2api.pool")
 
@@ -35,6 +38,8 @@ class Account:
     error_kind: str | None = None  # auth | forbidden | rate_limit | upstream | network
     uses: int = 0
     last_used: float = field(default_factory=time.time)
+    active_requests: int = 0
+    proxy: str | None = None
     conn: HatchConnection | None = None
     session: GatewaySession | None = None
 
@@ -94,45 +99,82 @@ class PoolExhausted(RuntimeError):
 
 class AccountPool:
     def __init__(self, settings: Settings, accounts: list[Account] | None = None,
-                 protocol: ProtocolConfig | None = None) -> None:
+                 protocol: ProtocolConfig | None = None,
+                 proxy_pool: ProxyPool | None = None) -> None:
         self.settings = settings
         self.protocol = protocol or ProtocolConfig.load()
+        self.proxy_pool = proxy_pool or ProxyPool.from_settings(settings)
         if accounts is not None:
             self.accounts = accounts
         else:
-            self.accounts = self._load_accounts(settings)
+            self.accounts = self._load_accounts(settings, self.proxy_pool)
         if not self.accounts:
             raise ValueError("no muse.ai accounts configured")
         self._index = 0
         self._lock = asyncio.Lock()
 
-    @staticmethod
-    def _load_accounts(settings: Settings) -> list[Account]:
+    @classmethod
+    def _load_accounts(cls, settings: Settings, proxy_pool: ProxyPool | None = None) -> list[Account]:
         raw = os.environ.get("MUSE_COOKIE_FILES") or settings.cookies_file
         files = [part.strip() for part in raw.split(",") if part.strip()]
         accounts: list[Account] = []
         for index, path in enumerate(files):
             try:
                 cookies = parse_cookie_file(path)
-                accounts.append(Account(name=Path(path).name or f"account-{index + 1}",
-                                        http=MuseHTTP(settings, cookies=cookies,
-                                                      cookie_path=path)))
+                name = Path(path).name or f"account-{index + 1}"
+                proxy = proxy_pool.get_for_account(name) if proxy_pool else settings.proxy
+                accounts.append(Account(
+                    name=name,
+                    http=MuseHTTP(settings, cookies=cookies, cookie_path=path, proxy=proxy),
+                    proxy=proxy,
+                ))
             except Exception as exc:  # noqa: BLE001
                 log.error("could not load cookies from %s: %s", path, exc)
         return accounts
 
+    def compute_concurrency(self) -> int:
+        """Calculate the concurrency limit for the pool.
+
+        If settings.concurrency is an explicit positive int, use it.
+        Otherwise ('auto' or unset), scale automatically:
+            max(per_account, len(self.accounts) * per_account)
+        """
+        if isinstance(self.settings.concurrency, int) and self.settings.concurrency > 0:
+            return self.settings.concurrency
+        per_account = max(1, getattr(self.settings, "concurrency_per_account", 2))
+        account_count = max(1, len(self.accounts))
+        return account_count * per_account
+
+    @asynccontextmanager
+    async def connection(self) -> AsyncIterator[tuple[Account, GatewaySession, HatchConnection]]:
+        """Acquire a connection lease, automatically tracking in-flight requests."""
+        account, session, conn = await self.connect()
+        account.active_requests += 1
+        try:
+            yield account, session, conn
+        finally:
+            account.active_requests = max(0, account.active_requests - 1)
+
     def _next(self) -> Account:
-        count = len(self.accounts)
-        for offset in range(count):
-            account = self.accounts[(self._index + offset) % count]
-            if account.available():
-                self._index = (self._index + offset + 1) % count
-                return account
+        available = [acc for acc in self.accounts if acc.available()]
+        if available:
+            min_active = min(acc.active_requests for acc in available)
+            candidates = [acc for acc in available if acc.active_requests == min_active]
+            count = len(self.accounts)
+            for offset in range(count):
+                acc = self.accounts[(self._index + offset) % count]
+                if acc in candidates:
+                    self._index = (self.accounts.index(acc) + 1) % count
+                    return acc
+            chosen = candidates[0]
+            self._index = (self.accounts.index(chosen) + 1) % count
+            return chosen
+
         # Everyone is cooling down: reset the earliest and try it.
         account = min(self.accounts, key=lambda item: item.cooldown_until)
         account.healthy = True
         account.cooldown_until = 0.0
-        self._index = (self.accounts.index(account) + 1) % count
+        self._index = (self.accounts.index(account) + 1) % len(self.accounts)
         return account
 
     async def _open(self, account: Account) -> tuple[Account, GatewaySession, HatchConnection]:
@@ -149,7 +191,7 @@ class AccountPool:
                 ws_client=account.http.client,
                 impersonate=self.settings.impersonate,
                 user_agent=self.settings.user_agent,
-                proxy=self.settings.proxy,
+                proxy=account.proxy or (self.proxy_pool.get_for_account(account.name) if self.proxy_pool else None) or self.settings.proxy,
                 ws_fallback=self.settings.ws_fallback,
             )
         except Exception as exc:
@@ -167,7 +209,7 @@ class AccountPool:
                 ws_client=account.http.client,
                 impersonate=self.settings.impersonate,
                 user_agent=self.settings.user_agent,
-                proxy=self.settings.proxy,
+                proxy=account.proxy or (self.proxy_pool.get_for_account(account.name) if self.proxy_pool else None) or self.settings.proxy,
                 ws_fallback=self.settings.ws_fallback,
             )
         account.conn = conn
@@ -201,6 +243,12 @@ class AccountPool:
                     except Exception as retry_exc:  # noqa: BLE001
                         last_error = retry_exc
                 account.mark_bad(last_error)
+                if account.proxy and self.proxy_pool and not self.proxy_pool.is_empty:
+                    self.proxy_pool.mark_unfit(account.proxy, reason=f"account failure ({account.error_kind}): {last_error}")
+                    new_proxy = self.proxy_pool.next_proxy()
+                    if new_proxy and new_proxy != account.proxy:
+                        account.proxy = new_proxy
+                        asyncio.create_task(account.http.set_proxy(new_proxy))
                 log.warning("account %s failed: %s", account.name, last_error)
         raise PoolExhausted(f"all muse.ai accounts failed; last error: {last_error}")
 
@@ -261,12 +309,17 @@ class AccountPool:
                 "name": account.name,
                 "healthy": account.available(),
                 "uses": account.uses,
+                "active_requests": account.active_requests,
+                "proxy": account.proxy,
                 "last_error": account.last_error,
                 "last_status": account.last_status,
                 "error_kind": account.error_kind,
             }
             for account in self.accounts
         ]
+
+    def proxy_status(self) -> list[dict]:
+        return self.proxy_pool.status() if self.proxy_pool else []
 
     async def close_idle(self) -> None:
         """Close open HTTP and warm WebSocket sessions during idle sleep."""
