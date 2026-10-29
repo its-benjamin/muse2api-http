@@ -1,19 +1,15 @@
-# muse2api (HTTP, no browser)
+# muse2api-http: OpenAI-Compatible API Bridge for muse.ai
 
-A standalone, OpenAI-compatible API for [muse.ai](https://muse.ai) that talks to
-the site's own backend directly: HTTPS for bootstrap, a Noise XX WebSocket for
-the Hatch gateway, and protobuf-framed RPC for chat.
+[![GitHub Release](https://img.shields.io/github/v/release/its-benjamin/muse2api-http?style=flat-square)](https://github.com/its-benjamin/muse2api-http/releases)
+[![Tests](https://img.shields.io/github/actions/workflow/status/its-benjamin/muse2api-http/tests.yml?branch=master&label=tests&style=flat-square)](https://github.com/its-benjamin/muse2api-http/actions/workflows/tests.yml)
+[![Docker Image](https://img.shields.io/badge/docker-GHCR-blue?style=flat-square&logo=docker)](https://github.com/its-benjamin/muse2api-http/pkgs/container/muse2api-http)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python)](https://www.python.org/)
 
-**No headless browser is needed.** There is no Playwright, no CDP, no Chromium
-download, and no browser process at runtime: the client reproduces the web
-client's HTTP/WebSocket protocol and TLS fingerprint with `curl_cffi`, so the
-whole service runs in a small Python container. Cookies are the only thing you
-supply.
+A fast, standalone, **OpenAI-compatible HTTP API bridge for [muse.ai](https://muse.ai)**. Connect your muse.ai account directly to **OpenWebUI**, **LibreChat**, **Cursor**, **Hermes Agent**, or any OpenAI-compatible client for streaming chat completions, tool/function calling, text-to-image, and text-to-video generation.
 
-The protocol layer is derived from the public Next.js bundle. `muse2api
-discover` refreshes the route table when muse.ai ships a new build; the bundled
-`muse2api/protocol.json` keeps the last known-good values so startup does not
-depend on the network.
+**No headless browser required.** Unlike Playwright, Puppeteer, or Chromium wrappers, `muse2api-http` communicates directly with muse.ai's backend using HTTPS for bootstrap, a **Noise XX WebSocket** for the Hatch gateway, and protobuf-framed RPC for chat. By reproducing the browser's HTTP/2 protocol and TLS fingerprint using `curl_cffi`, the entire bridge runs as an ultra-lightweight, efficient Python/Docker service. Cookies are the only requirement.
+
+The protocol layer is derived from the public Next.js bundle. `muse2api discover` refreshes the route table when muse.ai ships a new build; the bundled `muse2api/protocol.json` keeps the last known-good values so startup does not depend on the network.
 
 ## Credits
 
@@ -155,6 +151,37 @@ The container runs unprivileged as `muse` (uid 10001) and listens on port `8130`
 by default (map `-p 8130:8130` or `-p 18610:8130` to match the local port).
 When idle, the gateway releases upstream connections while keeping the HTTP port
 open and periodically renewing cookies in the background.
+
+### Client Integrations (OpenWebUI, LibreChat, Cursor)
+
+`muse2api-http` can be used as a drop-in custom OpenAI provider in standard frontends:
+
+#### OpenWebUI
+1. In OpenWebUI, navigate to **Settings** $\rightarrow$ **Admin Settings** $\rightarrow$ **Connections** $\rightarrow$ **OpenAI API**.
+2. Add a new connection:
+   - **API Base URL**: `http://127.0.0.1:18610/v1` (or `http://host.docker.internal:8130/v1` if OpenWebUI is in Docker)
+   - **API Key**: any non-empty string (or your `MUSE2API_KEY` if configured)
+3. Save and select the model `muse-spark`.
+
+#### LibreChat
+Add a custom endpoint to your `librechat.yaml`:
+
+```yaml
+endpoints:
+  custom:
+    - name: "muse.ai"
+      apiKey: "dummy" # or MUSE2API_KEY if configured
+      baseURL: "http://127.0.0.1:18610/v1"
+      models:
+        default: ["muse-spark"]
+      titleModel: "muse-spark"
+      modelDisplayLabel: "Muse AI"
+```
+
+#### Cursor & AI IDEs
+Configure **Cursor Settings** $\rightarrow$ **Models** $\rightarrow$ **OpenAI API Key**:
+- **Override OpenAI Base URL**: `http://127.0.0.1:18610/v1`
+- **Model Name**: `muse-spark`
 
 ## Sessions and permissions
 
