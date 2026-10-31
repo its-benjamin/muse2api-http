@@ -363,7 +363,7 @@ random headers:
 
 - `curl_cffi` with `impersonate="chrome"` reproduces the TLS (JA3/JA4) and
   HTTP/2 fingerprint of the Chrome build bundled with the installed
-  `curl_cffi` (currently Chrome 150, so the UA and `sec-ch-ua` match it).
+  `curl_cffi` (currently Chrome 152, so the UA and `sec-ch-ua` match it).
   Measured against a fingerprint echo: JA4 `t13d1516h2_8daaf6152771_806a8c22fdea`,
   the canonical Chrome value.
 - HTTP/2 is pinned (`MUSE_HTTP_VERSION=2`). The profile's h2 settings,

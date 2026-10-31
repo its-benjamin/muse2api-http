@@ -22,17 +22,23 @@ if TYPE_CHECKING:
     from .gateway import HatchConnection
 from .config import Settings
 from .cookies import CookieError, CookieJar, parse_cookie_file
-from .gateway import GatewaySession
+from .gateway import BROWSER_UA, GatewaySession, get_dynamic_browser_ua
+
+__all__ = [
+    "BASE",
+    "BASE_HEADERS",
+    "BROWSER_UA",
+    "GatewaySession",
+    "MuseAuthError",
+    "MuseHTTP",
+    "MuseUpstreamError",
+    "get_base_headers",
+    "get_dynamic_browser_ua",
+]
 
 log = logging.getLogger("muse2api.http")
 
 BASE = "https://muse.ai"
-# Only used by the stdlib-WebSocket fallback; curl_cffi sets the real UA from
-# the impersonation profile for both HTTP and WS.
-BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-)
 # Copied from the captured Firefox XHRs. curl_cffi owns TLS/HTTP2,
 # Accept-Encoding, Host and Connection; these are the application headers the
 # web client actually sends.

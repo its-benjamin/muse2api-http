@@ -11,6 +11,7 @@ from muse2api.gateway import (
     FIREFOX_BROWSER_UA,
     GatewayError,
     HatchConnection,
+    get_dynamic_browser_ua,
     get_ws_headers,
 )
 from muse2api.http import MuseHTTP, get_base_headers
@@ -38,6 +39,15 @@ def test_firefox_stealth_headers():
     assert ws_headers.get("Sec-Fetch-Storage-Access") == "none"
     assert "Firefox" in FIREFOX_BROWSER_UA
 
+
+def test_dynamic_browser_ua_resolution():
+    chrome_ua = get_dynamic_browser_ua("chrome")
+    assert "Chrome" in chrome_ua
+    assert "Mozilla/5.0" in chrome_ua
+
+    firefox_ua = get_dynamic_browser_ua("firefox")
+    assert "Firefox" in firefox_ua
+    assert "rv:" in firefox_ua
 
 def test_proxy_map():
     assert proxy_map(None) is None

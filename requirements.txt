@@ -2,7 +2,7 @@
 # keep both lists in sync (CI installs the project from pyproject).
 fastapi>=0.115
 uvicorn[standard]>=0.30
-curl_cffi>=0.7
+curl_cffi>=0.17.0
 websockets>=13
 cryptography>=43
 python-multipart>=0.0.9

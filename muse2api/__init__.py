@@ -4,7 +4,7 @@ No browser, no CDP. The bridge speaks the same Noise_XX WebSocket protocol the
 muse.ai web client uses, then exposes the agent over standard HTTP APIs.
 """
 
-__version__ = "0.1.9"
+__version__ = "0.2.0"
 
 import asyncio
 import sys

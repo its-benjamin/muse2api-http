@@ -10,12 +10,14 @@ import asyncio
 import codecs
 import json
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 
+from curl_cffi.requests.impersonate import resolve_latest_browser_type
 from websockets.asyncio.client import connect as ws_connect
 
 from .cvm import (
@@ -40,14 +42,21 @@ from .wire import (
 
 log = logging.getLogger("muse2api.gateway")
 
-CHROME_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
-)
-FIREFOX_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) "
-    "Gecko/20100101 Firefox/159.0"
-)
+def get_dynamic_browser_ua(target: str = "chrome") -> str:
+    """Dynamically resolve the browser User-Agent matching curl_cffi's active target."""
+    resolved = resolve_latest_browser_type(target or "chrome")
+    m = re.search(r"\d+", str(resolved))
+    version = m.group(0) if m else "152"
+    if "firefox" in str(resolved).lower():
+        return f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{version}.0) Gecko/20100101 Firefox/{version}.0"
+    return (
+        f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"
+    )
+
+
+CHROME_BROWSER_UA = get_dynamic_browser_ua("chrome")
+FIREFOX_BROWSER_UA = get_dynamic_browser_ua("firefox")
 BROWSER_UA = CHROME_BROWSER_UA
 
 
