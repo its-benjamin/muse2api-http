@@ -644,6 +644,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             len(pool.accounts),
             "manual" if isinstance(settings.concurrency, int) and settings.concurrency > 0 else "smart/auto",
         )
+        log.warning(
+            "\n========================================================================\n"
+            "[!] DISCLAIMER: ACCOUNT RISK & BAN WARNING\n"
+            "Using muse2api-http to automate or bridge unofficial muse.ai web sessions\n"
+            "carries risk of account restriction, rate limiting, or permanent ban.\n"
+            "Account safety and any risk of bans are solely your own responsibility.\n"
+            "This software is intended strictly for private, personal self-hosting.\n"
+            "========================================================================"
+        )
         app.state.locks = {}
         app.state.started_at = time.time()
         app.state.last_active_at = time.time()

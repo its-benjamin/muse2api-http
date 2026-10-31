@@ -42,11 +42,11 @@ log = logging.getLogger("muse2api.gateway")
 
 CHROME_BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 FIREFOX_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) "
-    "Gecko/20100101 Firefox/136.0"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) "
+    "Gecko/20100101 Firefox/159.0"
 )
 BROWSER_UA = CHROME_BROWSER_UA
 

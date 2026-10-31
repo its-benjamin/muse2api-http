@@ -11,6 +11,16 @@ A fast, standalone, **OpenAI-compatible HTTP API bridge for [muse.ai](https://mu
 
 The protocol layer is derived from the public Next.js bundle. `muse2api discover` refreshes the route table when muse.ai ships a new build; the bundled `muse2api/protocol.json` keeps the last known-good values so startup does not depend on the network.
 
+> [!WARNING]
+> ### ⚠️ Account Ban Risk & User Responsibility Disclaimer
+> **Account safety and any risk of account bans are solely your own responsibility.**
+> `muse2api-http` operates by reverse-engineering muse.ai's private web protocol and automating browser session cookies. Automating unofficial web sessions or bypassing web interfaces may violate muse.ai's Terms of Service and can result in rate limiting, session revocation, temporary account suspension, or permanent account termination.
+>
+> By running this software, you understand and agree that:
+> - You assume full and exclusive responsibility for your muse.ai account and its standing.
+> - The developers and contributors assume no liability for any account flags, bans, lost data, or lost access.
+> - This software is intended strictly for private, individual personal self-hosting. NEVER expose it as an open public API.
+
 ## Credits
 
 This project builds on the protocol work in
@@ -54,10 +64,11 @@ client instead of an API server, use MuseAI-API directly.
 
 ## Deployment & Running
 
-> **Note on personal use:** This bridge is built for **private, personal self-hosting**
+> **Note on personal use & account ban risk:** This bridge is built strictly for **private, personal self-hosting**
 > (e.g. your private Hermes agent, OpenWebUI, LibreChat, Cursor, or local scripts).
 > All turns run under your single underlying muse.ai account (sharing its workspace
 > and connector credentials). Do not host this as an open public API for untrusted callers.
+> **Account safety and any risk of account bans are solely your own responsibility.**
 
 ### How to get your cookies
 
@@ -420,13 +431,13 @@ random headers:
 
 ## Known limits
 
-- **Function calling is bridged.** Muse exposes few client tools on the wire,
-  so `muse2api/tool_bridge.py` renders the client catalog into the prompt,
-  treats the model's own `<<TOOL_CALL>> ... <<TOOL_CALL>>` or fenced JSON
-  `{"name": ...}` blocks as tool requests, and filters invented arguments to the
-  declared schema. Auto / required / forced `tool_choice` are honoured for both
-  `/v1/chat/completions` and `/v1/responses`, including `function_call` output
-  items and `function_call_arguments` streaming.
+- **Function calling is bridged via OmniRoute webTools.** Muse exposes no native client tools on the wire,
+  so `muse2api/tool_bridge.py` adopts the web-cookie tool architecture from [OmniRoute](https://github.com/diegosouzapw/OmniRoute):
+  it renders the client catalog into strict `<tool>{...}</tool>` contract instructions, preserves multi-turn
+  conversation trajectories to prevent model amnesia, parses nested/doubled leaf blocks, handles parameter tags
+  and tag suffixes (`<tool:bash>`), resolves near-miss tool names via Levenshtein fuzzy matching, and repairs
+  loose model JSON. Auto / required / forced `tool_choice` are honoured for both `/v1/chat/completions` and
+  `/v1/responses`, including `function_call` output items and `function_call_arguments` streaming.
 - **Video is account- and region-gated upstream by muse.ai.** Video generation
   is restricted by muse.ai to specific accounts and eligible regions. If your account
   does not have video access, muse returns a regional refusal. To avoid repeated

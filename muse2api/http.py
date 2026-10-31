@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
 import time
 import uuid
 from pathlib import Path
@@ -302,7 +303,7 @@ class MuseHTTP:
                 raise
             except Exception as exc:  # noqa: BLE001 - retry transient upstream
                 log.debug("session poll failed: %s", exc)
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(1.2 + random.uniform(0.1, 0.4))
                 continue
             last = info
             status = str(info.get("status") or "")
@@ -314,7 +315,7 @@ class MuseHTTP:
                 continue
             if info.get("vm_id") and state.upper() in {"RUNNING"}:
                 return info
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.2 + random.uniform(0.1, 0.4))
         raise MuseUpstreamError(
             f"VM {vm_id} did not become RUNNING: {last.get('status')} / {last.get('vm_state')}"
             if last else f"VM {vm_id} did not become RUNNING before timeout"
@@ -343,7 +344,7 @@ class MuseHTTP:
             vm_id = info.get("vm_id", vm_id)
             endpoint = info.get("endpoint_url", endpoint)
             # Settle window after waking so the VM's noise listener binds before upgrade
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.2 + random.uniform(0.1, 0.4))
 
         try:
             token_resp = await self.request_json(

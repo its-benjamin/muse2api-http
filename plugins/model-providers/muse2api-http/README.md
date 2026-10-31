@@ -37,3 +37,7 @@ at this server's `/v1`, and set `OPENAI_COMPAT_IMAGE_MODEL=muse-spark`.\\n
 - Responses/Codex-style `/v1/responses` is also available; if you prefer that mode,
   change `api_mode` in `__init__.py` to `\"codex_responses\"`.
 - Streaming, tools (auto/required/forced), and image attachments are supported.
+
+## Account risk & ban disclaimer
+
+Automating unofficial muse.ai web sessions via reverse-engineered protocols carries risk of account flags, rate limits, or permanent account bans. Account safety and any risk of bans are solely your own responsibility. Use strictly for private personal agent setups.

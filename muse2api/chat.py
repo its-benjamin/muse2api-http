@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
 import time
 import uuid
 from collections.abc import Callable
@@ -406,6 +407,7 @@ class ChatService:
         async with self._connection() as (_account, _session, conn):
             try:
                 await self._register_node(conn, state.node_id)
+                await self._register_capabilities(conn, state.node_id)
                 body = {
                     "items": items or [{"type": "text", "text": prompt}],
                     "message": prompt,
@@ -509,12 +511,12 @@ class ChatService:
                         _, _, conn = await self.pool.connect()
                     except Exception as rec_exc:
                         log.warning("gateway reconnection failed: %s", rec_exc)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.8 + random.uniform(-0.1, 0.2))
                 continue
 
             events = history_events(data)
             if not events:
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.7 + random.uniform(-0.1, 0.2))
                 continue
 
             user_index = -1
@@ -533,7 +535,7 @@ class ChatService:
                     if text and (text == needle or needle[:80] in text):
                         user_index = index
             if user_index < 0:
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.7 + random.uniform(-0.1, 0.2))
                 continue
 
             after = events[user_index + 1:]
@@ -627,7 +629,7 @@ class ChatService:
                 text_stable_at = None
 
             poll_interval = 0.35 if (current_text and text_stable_at is None) else 0.6
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(max(0.2, poll_interval + random.uniform(-0.05, 0.15)))
 
         return best, best_id, captured, media
 

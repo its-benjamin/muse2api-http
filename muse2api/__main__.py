@@ -16,6 +16,16 @@ except ImportError:
     from muse2api.pool import AccountPool
     from muse2api.protocol import ProtocolConfig
 
+DISCLAIMER_NOTICE = (
+    "\n========================================================================\n"
+    "[!] DISCLAIMER: ACCOUNT RISK & BAN WARNING\n"
+    "Using muse2api-http to automate or bridge unofficial muse.ai web sessions\n"
+    "carries risk of account restriction, rate limiting, or permanent ban.\n"
+    "Account safety and any risk of bans are solely your own responsibility.\n"
+    "This software is intended strictly for private, personal self-hosting.\n"
+    "========================================================================\n"
+)
+
 
 async def _ping(settings: Settings) -> int:
     protocol = ProtocolConfig.load()
@@ -92,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.command in {"ping", "chat", "serve"}:
+        print(DISCLAIMER_NOTICE, file=sys.stderr)
         try:
             from .cookies import ensure_cookie_file
         except ImportError:
